@@ -1,22 +1,30 @@
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <iostream>
 #include <mutex>
-#include <vector>
+#include <queue>
+#include <thread>
 
 #include <opencv2/videoio.hpp>
+
+#include "queue.hpp"
 
 class VideoWriter {
     public:
         VideoWriter(std::filesystem::path fileDir);
+        ~VideoWriter();
         void addFrame(cv::Mat frame);
-        void writeToFile();
     private:
         std::chrono::time_point<std::chrono::system_clock> getCurrentTime();
         std::filesystem::path generateFilePath();
         int calculateFPS();
+        void writeToFile();
         std::filesystem::path outputDir;
         std::chrono::time_point<std::chrono::system_clock> firstFrameTime;
-        std::vector<cv::Mat> frameBuffer = {};
+        SafeQueue<cv::Mat> frameBuffer;
         std::mutex frameBufferMut;
+        std::thread writeThread;
+        std::atomic<bool> shutdown = false;
 };

@@ -12,6 +12,5 @@ int main() {
         auto frame = camera.captureImage();
         writer.addFrame(frame);
     }
-    writer.writeToFile();
     return 0;
 }
