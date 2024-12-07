@@ -3,6 +3,9 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgcodecs.hpp>
 
+#ifndef CAMERA_H
+#define CAMERA_H
+
 class USBCamera {
     public:
         USBCamera();
@@ -14,3 +17,5 @@ class USBCamera {
        int cameraIndex = 0;
        const std::vector<int> encodeParams = {cv::IMWRITE_JPEG_QUALITY, 95};
 };
+
+#endif

@@ -2,6 +2,9 @@
 #include <queue>
 #include <mutex>
 
+#ifndef QUEUE_H
+#define QUEUE_H
+
 template <typename T>
 class SafeQueue {
     public:
@@ -39,3 +42,5 @@ class SafeQueue {
         std::mutex mut;
         std::condition_variable cond;
 };
+
+#endif

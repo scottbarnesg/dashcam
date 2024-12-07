@@ -11,6 +11,9 @@
 
 #include "queue.hpp"
 
+#ifndef VIDEO_H
+#define VIDEO_H
+
 class VideoWriter {
     public:
         VideoWriter(std::filesystem::path fileDir);
@@ -28,3 +31,5 @@ class VideoWriter {
         std::thread writeThread;
         std::atomic<bool> shutdown = false;
 };
+
+#endif
