@@ -43,12 +43,15 @@ void VideoWriter::writeToFile() {
 */
 
 std::chrono::time_point<std::chrono::system_clock> VideoWriter::getCurrentTime() {
-    using namespace std::chrono;
-    return zoned_time{current_zone(), system_clock::now()};
+    return std::chrono::system_clock::now();
 }
 
 std::filesystem::path VideoWriter::generateFilePath() {
-    std::filesystem::path fileName = std::format("{:%Y-%m-%d%H:%M:%S}", firstFrameTime) + ".mp4";
+    time_t t = std::chrono::system_clock::to_time_t(firstFrameTime);
+    auto tm = localtime(&t);
+    std::ostringstream timestamp;
+    timestamp << std::put_time(tm, "%Y-%m-%d_%H:%M:%S");
+    std::filesystem::path fileName = timestamp.str() + ".mp4";
     return outputDir / fileName;
 }
 
@@ -77,7 +80,7 @@ void VideoWriter::writeToFile() {
         // Write this frame to the file
         writer.write(frame);
     }
-    // TODO: Flush the buffer
+    // Flush the buffer
     while (!frameBuffer.empty()) {
         // Wait for new frame to be added to buffer
         cv::Mat frame = frameBuffer.pop();

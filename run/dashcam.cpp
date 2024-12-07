@@ -6,6 +6,7 @@
 
 int main() {
     USBCamera camera = USBCamera();
+    /*
     MotionDetector motionDetector = MotionDetector();
     while (true) {
         auto frame = camera.captureImage();
@@ -18,8 +19,9 @@ int main() {
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
+    */
     
-    /*
+    
     std::chrono::seconds recordingDuration(10);
     
     VideoWriter writer = VideoWriter("videos/");
@@ -28,6 +30,6 @@ int main() {
         auto frame = camera.captureImage();
         writer.addFrame(frame);
     }
-    */
+    
     return 0;
 }
