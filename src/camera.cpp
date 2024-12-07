@@ -2,6 +2,7 @@
 
 USBCamera::USBCamera() {
     cam = cv::VideoCapture(cameraIndex);
+    cam.set(cv::CAP_PROP_BUFFERSIZE, 1);
     if (!cam.isOpened()) {
         throw std::runtime_error("Could not open webcam");
     }

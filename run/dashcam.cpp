@@ -7,7 +7,7 @@
 int main() {
     USBCamera camera = USBCamera();
     MotionDetector motionDetector = MotionDetector();
-    std::chrono::seconds captureDelay(1);
+    std::chrono::milliseconds captureDelay(500);
     while (true) {
         std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
         auto frame = camera.captureImage();
