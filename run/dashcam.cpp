@@ -8,6 +8,7 @@ void recordVideo(USBCamera* camera, MotionDetector* detector) {
     std::chrono::seconds recordingDuration(10);
     VideoWriter writer = VideoWriter("videos/");
     std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
+    // TODO: Update this loop to keep recording as long as motion is detected
     while ((std::chrono::system_clock::now() - startTime) < recordingDuration) {
         auto frame = camera->captureImage();
         writer.addFrame(frame);
