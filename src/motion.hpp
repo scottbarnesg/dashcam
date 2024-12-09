@@ -14,6 +14,7 @@ class MotionDetector {
         void addFrame(cv::Mat frame);
         bool motionDetected();
         std::chrono::system_clock::time_point motionLastDetected();
+        void reset();
     private:
         cv::Mat previousFrame;
         cv::Mat currentFrame;

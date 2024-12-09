@@ -12,6 +12,7 @@ void recordVideo(USBCamera* camera, MotionDetector* detector) {
         auto frame = camera->captureImage();
         writer.addFrame(frame);
     }
+    detector->reset();
 }
 
 int main() {

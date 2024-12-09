@@ -50,7 +50,7 @@ std::filesystem::path VideoWriter::generateFilePath() {
     time_t t = std::chrono::system_clock::to_time_t(firstFrameTime);
     auto tm = localtime(&t);
     std::ostringstream timestamp;
-    timestamp << std::put_time(tm, "%Y-%m-%d_%H:%M:%S");
+    timestamp << std::put_time(tm, "%Y-%m-%d_%H_%M_%S");
     std::filesystem::path fileName = timestamp.str() + ".mp4";
     return outputDir / fileName;
 }

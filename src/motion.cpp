@@ -35,3 +35,9 @@ std::chrono::system_clock::time_point MotionDetector::motionLastDetected() {
     return _motionLastDetected;
 }
 
+void MotionDetector::reset() {
+    std::scoped_lock lock(frameMutex);
+    previousFrame = cv::Mat{};
+    currentFrame = cv::Mat{};
+}
+
