@@ -1,3 +1,4 @@
+#include <chrono>
 #include <mutex>
 #include <iostream>
 
@@ -12,11 +13,13 @@ class MotionDetector {
     public:
         void addFrame(cv::Mat frame);
         bool motionDetected();
+        std::chrono::system_clock::time_point motionLastDetected();
     private:
         cv::Mat previousFrame;
         cv::Mat currentFrame;
         std::mutex frameMutex;
         int motionThreshold = 10000;
+        std::chrono::system_clock::time_point _motionLastDetected;
 };
 
 #endif

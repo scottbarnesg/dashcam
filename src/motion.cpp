@@ -24,9 +24,14 @@ bool MotionDetector::motionDetected() {
     cv::findContours(frameDiff, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     for (std::vector<cv::Point> contour : contours) {
         if (cv::contourArea(contour) >= motionThreshold) {
+            _motionLastDetected = std::chrono::system_clock::now();
             return true;
         }
     }
     return false;
+}
+
+std::chrono::system_clock::time_point MotionDetector::motionLastDetected() {
+    return _motionLastDetected;
 }
 
