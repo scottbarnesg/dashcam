@@ -1,4 +1,4 @@
-.PHONY: build clean lint install certs
+.PHONY: build clean lint install install-deps certs
 
 build:
 	mkdir -p build
@@ -11,6 +11,12 @@ lint:
 	cppcheck --enable=all --suppress=missingIncludeSystem -I src/ -I include/ src/ include/ run/
 
 install:
+	make build
+	sudo cp build/dashcam /usr/local/bin/dashcam
+	sudo cp systemd/dashcam.service /etc/systemd/system/
+
+
+install-deps:
 	sudo apt install -y cppcheck build-essential cmake pkg-config git libssl-dev libopencv-dev
 
 certs:

@@ -1,0 +1,12 @@
+[Unit]
+Description=Dashcam Service
+After=network.target
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+ExecStart=/usr/local/bin/dashcam
