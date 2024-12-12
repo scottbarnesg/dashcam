@@ -13,6 +13,8 @@ lint:
 install:
 	make build
 	sudo cp build/dashcam /usr/local/bin/dashcam
+	cp ./systemd/dashcam-base.service ./systemd/dashcam.service
+	./systemd/configure-service.sh
 	sudo cp systemd/dashcam.service /etc/systemd/system/
 
 
