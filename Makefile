@@ -21,6 +21,7 @@ install:
 	./systemd/configure-service.sh
 	sudo cp systemd/dashcam.service /etc/systemd/system/
 	mkdir -p /home/${USER}/.dashcam
+	[ -f /home/${USER}/.dashcam/dashcam.conf ] || cp ./dashcam.conf.example /home/${USER}/.dashcam/dashcam.conf
 
 
 install-deps:

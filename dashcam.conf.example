@@ -1,0 +1,32 @@
+# dashcam configuration
+# Copy to ~/.dashcam/dashcam.conf (the systemd service runs with that as its
+# working directory and reads ./dashcam.conf). Every key is optional; values
+# shown are the built-in defaults. Unknown keys and invalid values are
+# reported to stderr and ignored.
+
+# Camera backend: usb (development) | pi (Pi Camera Module, requires a build
+# with -DUSE_PI_CAMERA=ON).
+camera_backend = usb
+
+# Where recordings and manifest.jsonl are written (relative to the working
+# directory, or absolute).
+video_dir = videos
+
+# Driving trigger (motion-as-driving proxy): recording stops only after this
+# many consecutive seconds with no motion. Mid-drive fragmentation at stops
+# shorter than this is expected and accepted.
+no_motion_timeout_seconds = 120
+
+# Frame capture rate while idle (watching for motion) and while recording.
+idle_fps = 2.0
+recording_fps = 30.0
+
+# Minimum contour area, in pixels, that a frame difference must exceed to
+# count as motion. Resolution-dependent: raise if false triggers, lower if
+# motion at night or at distance is missed.
+motion_threshold = 10000
+
+# Recording files are closed and rolled over every this many seconds, so a
+# power cut loses at most one segment. Closed segments are registered in the
+# manifest; an interrupted segment is quarantined on next boot.
+segment_length_seconds = 120
