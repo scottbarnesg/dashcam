@@ -16,7 +16,7 @@ void recordVideo(USBCamera* camera, MotionDetector* detector) {
         // Continue to perform motion detection
         detector->addFrame(frame);
         if (detector->motionDetected()) {
-            // If motion is detected, reset the start  time
+            // If motion is detected, reset the start time
             startTime = std::chrono::system_clock::now();
         }
     }

@@ -24,4 +24,4 @@ install-deps:
 
 certs:
 	mkdir -p certs
-	cd certs; openssl genpkey -algorithm RSA -out key.pem; openssl req -new -key key.pem -out csr.csr -subj "/C=US/ST=VA/L=Sterling/O=c2/OU=c2/CN=c2"; openssl x509 -req -days 365 -in csr.csr -signkey key.pem -out cert.pem
+	cd certs; openssl genpkey -algorithm RSA -out key.pem; openssl req -new -key key.pem -out csr.csr -subj "/C=US/ST=VA/L=Purcellville/O=c2/OU=c2/CN=c2"; openssl x509 -req -days 365 -in csr.csr -signkey key.pem -out cert.pem
