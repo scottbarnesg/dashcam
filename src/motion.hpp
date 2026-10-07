@@ -13,6 +13,7 @@
 // motionDetected() reports the result for the most recently added frame.
 class MotionDetector {
     public:
+        explicit MotionDetector(int threshold = 10000) : motionThreshold(threshold) {}
         void addFrame(cv::Mat frame);
         bool motionDetected();
         std::chrono::system_clock::time_point motionLastDetected();

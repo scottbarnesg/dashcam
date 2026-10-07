@@ -3,6 +3,7 @@
 #include <thread>
 
 #include "camera.hpp"
+#include "config.hpp"
 #include "driving.hpp"
 #include "motion.hpp"
 #include "video.hpp"
@@ -10,13 +11,16 @@
 // Motion-as-driving proxy (BACKLOG item 2): motion starts recording; recording
 // continues until no motion has been seen for the no-motion timeout N.
 int main(int argc, char* argv[]) {
-    std::string backend = "usb";
-    if (argc > 1) {
-        backend = argv[1];
-    }
-    auto camera = createCamera(backend);
-    MotionDetector motionDetector = MotionDetector();
-    DrivingController controller = DrivingController(DrivingController::Params{});
+    std::filesystem::path configPath = argc > 1 ? argv[1] : "dashcam.conf";
+    Config config = Config::load(configPath);
+
+    auto camera = createCamera(config.cameraBackend);
+    MotionDetector motionDetector = MotionDetector(config.motionThreshold);
+    DrivingController::Params params;
+    params.noMotionTimeout = std::chrono::seconds(config.noMotionTimeoutSeconds);
+    params.idleFps = config.idleFps;
+    params.recordingFps = config.recordingFps;
+    DrivingController controller = DrivingController(params);
 
     std::cout << "Dashcam started with camera backend: " << camera->name() << std::endl;
 
@@ -32,7 +36,7 @@ int main(int argc, char* argv[]) {
             if (recording) {
                 if (!writer) {
                     std::cout << "Motion detected! Recording video..." << std::endl;
-                    writer = std::make_unique<VideoWriter>("videos/");
+                    writer = std::make_unique<VideoWriter>(config.videoDir);
                 }
                 writer->addFrame(frame);
             } else if (writer) {
