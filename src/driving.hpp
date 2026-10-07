@@ -1,5 +1,4 @@
 #include <chrono>
-#include <functional>
 
 #ifndef DRIVING_HPP
 #define DRIVING_HPP

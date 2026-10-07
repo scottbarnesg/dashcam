@@ -22,7 +22,7 @@ class SafeQueue {
             queue.push(std::move(t));
             cond.notify_one();
             return true;
-        }
+        };
 
         // Blocks until an item is available or the queue is closed.
         // Returns default-constructed T when closed and drained.
