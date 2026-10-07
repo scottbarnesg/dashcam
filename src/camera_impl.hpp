@@ -21,7 +21,7 @@ class USBCamera : public Camera {
 // Synthetic camera for tests: a background with a rectangle that jumps around while "moving".
 class SimulatedCamera : public Camera {
     public:
-        SimulatedCamera(int width = 640, int height = 480);
+        explicit SimulatedCamera(int width = 640, int height = 480);
         cv::Mat captureImage() override;
         std::string name() const override { return "sim"; }
         void setMoving(bool moving) { moving_ = moving; }

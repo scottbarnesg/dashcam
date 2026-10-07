@@ -10,6 +10,7 @@
 #ifdef USE_PI_CAMERA
 
 #include <algorithm>
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <stdexcept>
@@ -80,8 +81,10 @@ cv::Mat PiCamera::captureImage() {
     const unsigned char* end = begin + buffer.size();
     const unsigned char* soi = std::search(begin, end, kJpegStart, kJpegStart + 3);
     const unsigned char* eoi = std::search(soi + 3, end, kJpegEnd, kJpegEnd + 2);
-    std::vector<unsigned char> jpeg(soi, eoi + 2);
-    buffer.erase(buffer.begin(), buffer.begin() + (eoi + 2 - begin));
+    const std::size_t consumed = (eoi + 2) - begin;
+    std::vector<unsigned char> jpeg;
+    jpeg.assign(buffer.begin(), buffer.begin() + consumed);
+    buffer.erase(buffer.begin(), buffer.begin() + consumed);
     return cv::imdecode(jpeg, cv::IMREAD_COLOR);
 }
 

@@ -1,27 +1,14 @@
+#include <chrono>
 #include <iostream>
+#include <thread>
 
 #include "camera.hpp"
+#include "driving.hpp"
 #include "motion.hpp"
 #include "video.hpp"
 
-void recordVideo(Camera* camera, MotionDetector* detector) {
-    std::chrono::seconds recordingDuration(10);
-    VideoWriter writer = VideoWriter("videos/");
-    std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
-    while ((std::chrono::system_clock::now() - startTime) < recordingDuration) {
-        // Capture the frame and add it to the video
-        auto frame = camera->captureImage();
-        writer.addFrame(frame);
-        // Continue to perform motion detection
-        detector->addFrame(frame);
-        if (detector->motionDetected()) {
-            // If motion is detected, reset the start time
-            startTime = std::chrono::system_clock::now();
-        }
-    }
-    detector->reset();
-}
-
+// Motion-as-driving proxy (BACKLOG item 2): motion starts recording; recording
+// continues until no motion has been seen for the no-motion timeout N.
 int main(int argc, char* argv[]) {
     std::string backend = "usb";
     if (argc > 1) {
@@ -29,21 +16,32 @@ int main(int argc, char* argv[]) {
     }
     auto camera = createCamera(backend);
     MotionDetector motionDetector = MotionDetector();
-    std::chrono::milliseconds captureDelay(500); // Interval between frames being captured to check for motion
+    DrivingController controller = DrivingController(DrivingController::Params{});
+
     std::cout << "Dashcam started with camera backend: " << camera->name() << std::endl;
+
+    std::unique_ptr<VideoWriter> writer;
     while (true) {
-        std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
+        auto now = std::chrono::system_clock::now();
         auto frame = camera->captureImage();
-        motionDetector.addFrame(frame);
-        if (motionDetector.motionDetected()) {
-            std::cout << "Motion detected! Recording video..." << std::endl;
-            recordVideo(camera.get(), &motionDetector);
-            std::cout << "Done recording video." << std::endl;
+        if (frame.empty()) {
+            std::cerr << "Warning: capture returned no frame, skipping" << std::endl;
+        } else {
+            motionDetector.addFrame(frame);
+            bool recording = controller.onFrame(now, motionDetector.motionDetected());
+            if (recording) {
+                if (!writer) {
+                    std::cout << "Motion detected! Recording video..." << std::endl;
+                    writer = std::make_unique<VideoWriter>("videos/");
+                }
+                writer->addFrame(frame);
+            } else if (writer) {
+                writer.reset(); // Destructor flushes buffered frames and closes the file.
+                motionDetector.reset();
+                std::cout << "Done recording video." << std::endl;
+            }
         }
-        std::chrono::duration elapsed = std::chrono::system_clock::now() - startTime;
-        if (elapsed < captureDelay) {
-            std::this_thread::sleep_for(captureDelay - elapsed);
-        }
+        std::this_thread::sleep_for(controller.timeUntilNextCapture(std::chrono::system_clock::now()));
     }
     return 0;
 }

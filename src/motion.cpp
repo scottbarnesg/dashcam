@@ -1,14 +1,17 @@
 #include "motion.hpp"
 
-
 void MotionDetector::addFrame(cv::Mat frame) {
+    if (frame.empty()) {
+        return;
+    }
     std::scoped_lock lock(frameMutex);
     previousFrame = currentFrame.clone(); // Current frame becomes previous frame
     cv::cvtColor(frame, currentFrame, cv::COLOR_BGR2GRAY); // New frame becomes current frame, converted to grayscale
+    lastResult = computeMotion();
 }
 
-bool MotionDetector::motionDetected() {
-    std::scoped_lock lock(frameMutex);
+// Caller must hold frameMutex.
+bool MotionDetector::computeMotion() {
     // Verify we actually have 2 frames
     if (currentFrame.empty() || previousFrame.empty()) {
         return false;
@@ -19,7 +22,6 @@ bool MotionDetector::motionDetected() {
     // Calculate the threshold
     cv::threshold(frameDiff, frameDiff, 25, 255, cv::THRESH_BINARY);
     // TODO: Dilate threshold
-    // TODO: Check if any of the contours exceed the motion threshold
     std::vector<std::vector<cv::Point> > contours;
     cv::findContours(frameDiff, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     for (std::vector<cv::Point> contour : contours) {
@@ -31,6 +33,11 @@ bool MotionDetector::motionDetected() {
     return false;
 }
 
+bool MotionDetector::motionDetected() {
+    std::scoped_lock lock(frameMutex);
+    return lastResult;
+}
+
 std::chrono::system_clock::time_point MotionDetector::motionLastDetected() {
     return _motionLastDetected;
 }
@@ -39,5 +46,5 @@ void MotionDetector::reset() {
     std::scoped_lock lock(frameMutex);
     previousFrame = cv::Mat{};
     currentFrame = cv::Mat{};
+    lastResult = false;
 }
-

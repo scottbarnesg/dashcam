@@ -9,6 +9,8 @@
 #ifndef MOTION_H
 #define MOTION_H
 
+// Frame-differencing motion detector. The comparison runs once per addFrame();
+// motionDetected() reports the result for the most recently added frame.
 class MotionDetector {
     public:
         void addFrame(cv::Mat frame);
@@ -16,10 +18,12 @@ class MotionDetector {
         std::chrono::system_clock::time_point motionLastDetected();
         void reset();
     private:
+        bool computeMotion(); // Caller must hold frameMutex.
         cv::Mat previousFrame;
         cv::Mat currentFrame;
         std::mutex frameMutex;
         int motionThreshold = 10000;
+        bool lastResult = false;
         std::chrono::system_clock::time_point _motionLastDetected;
 };
 
