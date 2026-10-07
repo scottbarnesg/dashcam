@@ -24,14 +24,14 @@ class DrivingController {
         // (the caller must pass frames to the video writer when this returns true).
         bool onFrame(std::chrono::system_clock::time_point now, bool motion);
 
-        State state() const { return state_; }
+        State state() const { return _state; }
         std::chrono::microseconds timeUntilNextCapture(std::chrono::system_clock::time_point now) const;
 
     private:
-        Params params_;
-        State state_ = State::Idle;
-        std::chrono::system_clock::time_point lastMotion_{};
-        std::chrono::system_clock::time_point nextCaptureDeadline_{};
+        Params settings;
+        State _state = State::Idle;
+        std::chrono::system_clock::time_point lastMotionTime{};
+        std::chrono::system_clock::time_point nextCaptureDeadline{};
         double fps() const;
 };
 

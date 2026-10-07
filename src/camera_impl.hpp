@@ -24,12 +24,12 @@ class SimulatedCamera : public Camera {
         explicit SimulatedCamera(int width = 640, int height = 480);
         cv::Mat captureImage() override;
         std::string name() const override { return "sim"; }
-        void setMoving(bool moving) { moving_ = moving; }
+        void setMoving(bool moving) { _moving = moving; }
     private:
-        int width_;
-        int height_;
-        bool moving_ = false;
-        int frameNumber_ = 0;
+        int frameWidth;
+        int frameHeight;
+        bool _moving = false;
+        int frameNumber = 0;
 };
 
 #ifdef USE_PI_CAMERA

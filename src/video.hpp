@@ -36,8 +36,8 @@ class VideoWriter {
         VideoWriter(std::filesystem::path fileDir, SegmentOptions options);
         ~VideoWriter();
         void addFrame(cv::Mat frame);
-        int droppedFrames() const { return dropped_.load(); }
-        int segmentsWritten() const { return segmentsWritten_; }
+        int droppedFrames() const { return droppedFrameCount.load(); }
+        int segmentsWritten() const { return _segmentsWritten; }
 
     private:
         static constexpr std::size_t kBufferCapacity = 64;
@@ -55,8 +55,8 @@ class VideoWriter {
         SafeQueue<cv::Mat> frameBuffer{kBufferCapacity};
         std::mutex frameBufferMut;
         std::thread writeThread;
-        std::atomic<int> dropped_{0};
-        int segmentsWritten_{0};
+        std::atomic<int> droppedFrameCount{0};
+        int _segmentsWritten = 0;
 
         // Writer-thread-only state:
         cv::VideoWriter segmentWriter;

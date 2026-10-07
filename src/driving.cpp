@@ -2,28 +2,28 @@
 
 #include <algorithm>
 
-DrivingController::DrivingController(Params params) : params_(params) {
+DrivingController::DrivingController(Params params) : settings(params) {
 }
 
 double DrivingController::fps() const {
-    return state_ == State::Idle ? params_.idleFps : params_.recordingFps;
+    return _state == State::Idle ? settings.idleFps : settings.recordingFps;
 }
 
 bool DrivingController::onFrame(std::chrono::system_clock::time_point now, bool motion) {
     if (motion) {
-        lastMotion_ = now;
-        if (state_ == State::Idle) {
-            state_ = State::Recording;
+        lastMotionTime = now;
+        if (_state == State::Idle) {
+            _state = State::Recording;
         }
-    } else if (state_ == State::Recording && (now - lastMotion_) >= params_.noMotionTimeout) {
-        state_ = State::Idle;
+    } else if (_state == State::Recording && (now - lastMotionTime) >= settings.noMotionTimeout) {
+        _state = State::Idle;
     }
-    nextCaptureDeadline_ = now + std::chrono::microseconds(static_cast<long long>(1e6 / fps()));
-    return state_ == State::Recording;
+    nextCaptureDeadline = now + std::chrono::microseconds(static_cast<long long>(1e6 / fps()));
+    return _state == State::Recording;
 }
 
 std::chrono::microseconds DrivingController::timeUntilNextCapture(std::chrono::system_clock::time_point now) const {
-    auto remaining = nextCaptureDeadline_ - now;
+    auto remaining = nextCaptureDeadline - now;
     if (remaining < std::chrono::microseconds::zero()) {
         remaining = std::chrono::microseconds::zero();
     }

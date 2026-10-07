@@ -25,8 +25,8 @@ VideoWriter::~VideoWriter() {
     if (writeThread.joinable()) {
         writeThread.join();
     }
-    if (dropped_.load() > 0) {
-        std::cerr << "VideoWriter dropped " << dropped_.load() << " frames (encoder fell behind)" << std::endl;
+    if (droppedFrameCount.load() > 0) {
+        std::cerr << "VideoWriter dropped " << droppedFrameCount.load() << " frames (encoder fell behind)" << std::endl;
     }
 }
 
@@ -41,7 +41,7 @@ void VideoWriter::addFrame(cv::Mat frame) {
     lastFrameTime = getCurrentTime();
     framesSeen++;
     if (!frameBuffer.push(std::move(frame))) {
-        dropped_++;
+        droppedFrameCount++;
     }
 }
 
@@ -115,7 +115,7 @@ void VideoWriter::closeSegment() {
     }
     segmentWriter.release();
     std::filesystem::remove(sentinelPath);
-    segmentsWritten_++;
+    _segmentsWritten++;
     if (options.manifest) {
         double duration = segmentFrames > 1
             ? std::chrono::duration<double>(getCurrentTime() - segmentStart).count()
