@@ -24,7 +24,19 @@ The system operates in an **intermittently connected environment**:
 
 ## Current status / gaps
 
-- Motion detection and on-motion recording implemented (frame-differencing via OpenCV).
-- Driving-state detection (e.g., GPS, accelerometer/IGN signal) — not yet implemented.
-- Server offload + delete-after-offload — not yet implemented (OpenSSL is linked in anticipation; a `feature/delete-old-videos` branch has unmerged WIP for storage cleanup).
-- Pi Camera Module support — not yet implemented; current capture path is USB webcam only.
+- Driving trigger implemented as a **motion-as-driving proxy** (BACKLOG item 2):
+  motion starts recording; recording continues until no motion is seen for a
+  configurable timeout (default 120s). Mid-drive fragmentation at stops is accepted.
+- Capture runs behind a `Camera` interface with USB (dev), simulated (tests), and
+  Pi Camera Module (`rpicam-vid` MJPEG pipe, build option `USE_PI_CAMERA`) backends.
+- Recording is **power-loss-safe**: fixed-length self-closing segments with a
+  write sentinel, boot-time quarantine of incomplete files, and free-space checks.
+- A **manifest** (`manifest.jsonl`, atomic writes, SHA-256 per file, rebuildable)
+  tracks every complete recording and its upload state — the basis for cleanup
+  and offload.
+- Configuration via `dashcam.conf` (thresholds, timeout N, fps, segment length,
+  paths); runtime tuning needs no recompile.
+- Old-file cleanup (backlog 5b) and server offload (5c) — not yet implemented;
+  OpenSSL and the manifest are ready for them.
+- Secondary driving triggers (GPS, MPU-6050 IMU, ACC-switched power) — backlog.
+

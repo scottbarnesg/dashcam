@@ -2,7 +2,7 @@
 
 Items are roughly in priority order.
 
-## 1. Pi Camera Module support (build-time optional)
+## 1. Pi Camera Module support (build-time optional) — DONE (pending verification on real Pi hardware)
 
 Add capture support for the Pi Camera Module while keeping USB webcam support for desktop dev/testing. Selection happens at build time (e.g., CMake option `USE_LIBCAMERA` vs OpenCV `VideoCapture`), behind a common `Camera` interface so `dashcam.cpp` and the motion detector are backend-agnostic.
 
@@ -11,7 +11,7 @@ Add capture support for the Pi Camera Module while keeping USB webcam support fo
 - CMake option to select backend; default to USB on desktop, Pi camera on Pi.
 - Verify motion detection still works with Pi camera output (resolution/format differences).
 
-## 2. Driving mode — motion-as-driving proxy
+## 2. Driving mode — motion-as-driving proxy — DONE
 
 **Decision:** the primary trigger (record while driving) is implemented in software as a motion-as-driving proxy. Because the camera is vehicle-fixed, sustained optical motion implies the vehicle is moving. Mid-drive fragmentation (clips ending at red lights / stopped traffic) is **accepted**; the no-motion stop timeout "N" is deliberately large.
 
@@ -25,7 +25,7 @@ State machine: `IDLE` → first motion starts recording → `RECORDING` → stop
 
 **Prerequisites:** §3 (power-loss-safe recording — a hard power cut mid-drive must not lose the whole clip) and the `VideoWriter` destructor hang fix pulled forward from §6 (every clip stop constructs/destroys a `VideoWriter`, so a blocked `pop()` would wedge the whole state machine at the end of the first recording).
 
-## 3. Power-loss-safe recording
+## 3. Power-loss-safe recording — DONE
 
 A hard power cut (ignition off / yanked lead) must not destroy the footage the device exists to capture. A plain `cv::VideoWriter` MP4 is **entirely unplayable** if power dies before `release()` — the `moov` atom is written on close, so a lost file means a lost drive.
 
@@ -34,7 +34,7 @@ A hard power cut (ignition off / yanked lead) must not destroy the footage the d
 - On boot, detect and quarantine/discard the incomplete final segment; only *complete* segments get registered for cleanup/offload eligibility (ties into §5a manifest).
 - Follow-up (see Later): supercap/UPS graceful shutdown to close the in-progress segment cleanly.
 
-## 4. Configuration file
+## 4. Configuration file — DONE
 
 Replace hardcoded values with a config file read at startup (e.g., `~/.dashcam/dashcam.conf`); prerequisite for in-vehicle tuning of §2/§3, since every tuning iteration is a recompile otherwise.
 
@@ -43,7 +43,7 @@ Replace hardcoded values with a config file read at startup (e.g., `~/.dashcam/d
 
 ## 5. Storage management
 
-### 5a. File naming + manifest schema (design first — prerequisite for 5b and 5c)
+### 5a. File naming + manifest schema (design first — prerequisite for 5b and 5c) — DONE
 
 The manifest is the load-bearing artifact: cleanup, offload, and crash recovery all depend on it. Specify before building either.
 
@@ -68,9 +68,9 @@ Connectivity is intermittent: files accumulate while driving (offline), offload 
 
 ## 6. Robustness fixes
 
-- **Bounded frame buffer**: `VideoWriter::frameBuffer` grows without limit if encoding falls behind capture — bound it and drop/stall policy on overflow. (Also a prerequisite for §2: driving clips are long, so drift compounds.)
-- **Empty-frame handling**: `captureImage()` can return an empty `Mat` (camera hiccup); it currently flows into motion detection and the video writer and will crash/produce bad video.
-- `VideoWriter` destructor can hang if the writer thread is blocked in `SafeQueue::pop()` — add shutdown notification.
+- ~~Bounded frame buffer~~ — DONE (bounded at 64 frames, drops counted and logged).
+- ~~Empty-frame handling~~ — DONE (dropped in capture, motion, and writer paths).
+- ~~`VideoWriter` destructor hang~~ — DONE (`SafeQueue::close()` wakes blocked consumers).
 - Fix `configure-service.sh` (appends a literal sed command into the unit file instead of executing it) and `make install` invoking `make build` non-recursively.
 
 ## Later / ideas
