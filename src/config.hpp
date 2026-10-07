@@ -7,7 +7,7 @@
 // Runtime configuration (BACKLOG item 4). Loaded from a "key = value" text file;
 // unknown keys and invalid values are logged and the built-in default is kept.
 struct Config {
-    std::string cameraBackend = "usb";     // usb | sim | pi
+    std::string cameraBackend = "usb";     // usb | pi
     std::filesystem::path videoDir = "videos";
     int noMotionTimeoutSeconds = 120;      // N for the driving state machine
     double idleFps = 2.0;

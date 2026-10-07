@@ -16,7 +16,7 @@ class Camera {
         virtual std::string name() const = 0;
 };
 
-// Factory: "usb" | "sim" | "pi" ("pi" only available when built with -DUSE_PI_CAMERA=ON).
+// Factory: "usb" | "pi" ("pi" only available when built with -DUSE_PI_CAMERA=ON).
 std::unique_ptr<Camera> createCamera(const std::string& backend);
 
 #endif

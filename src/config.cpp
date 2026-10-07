@@ -62,7 +62,7 @@ bool applyKeyValue(Config& config, const std::string& key, const std::string& va
     };
 
     if (key == "camera_backend") {
-        if (value != "usb" && value != "sim" && value != "pi") {
+        if (value != "usb" && value != "pi") {
             return false;
         }
         config.cameraBackend = value;

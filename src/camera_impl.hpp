@@ -18,19 +18,7 @@ class USBCamera : public Camera {
         int cameraIndex = 0;
 };
 
-// Synthetic camera for tests: a background with a rectangle that jumps around while "moving".
-class SimulatedCamera : public Camera {
-    public:
-        explicit SimulatedCamera(int width = 640, int height = 480);
-        cv::Mat captureImage() override;
-        std::string name() const override { return "sim"; }
-        void setMoving(bool moving) { _moving = moving; }
-    private:
-        int frameWidth;
-        int frameHeight;
-        bool _moving = false;
-        int frameNumber = 0;
-};
+// Synthetic camera for tests lives in tests/simulated_camera.hpp (test-only).
 
 #ifdef USE_PI_CAMERA
 // Captures from the Pi Camera Module by piping the MJPEG byte stream produced by

@@ -1,8 +1,12 @@
-.PHONY: build clean lint install install-deps certs
+.PHONY: build clean test lint install install-deps certs
 
 build:
 	mkdir -p build
 	cd build; cmake ../; make -j
+
+test:
+	mkdir -p build
+	cd build; cmake -DBUILD_TESTS=ON ../; make -j dashcam_tests; ctest --output-on-failure
 
 clean:
 	rm -rf build

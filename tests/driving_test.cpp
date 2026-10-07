@@ -1,65 +1,74 @@
 #include "driving.hpp"
-#include "test.hpp"
+
+#include <gtest/gtest.h>
 
 using Clock = std::chrono::system_clock;
+using State = DrivingController::State;
 
-// 200ms idle, one motion frame -> recording; motion every 1s keeps it alive;
-// 5s of no motion with N=2s -> stops. Also checks capture pacing.
-int main() {
+namespace {
+DrivingController::Params fastParams(std::chrono::seconds timeout) {
     DrivingController::Params params;
-    params.noMotionTimeout = std::chrono::seconds(2);
-    params.idleFps = 1000;      // don't let pacing interfere with tests
+    params.noMotionTimeout = timeout;
+    params.idleFps = 1000;   // don't let pacing interfere with state tests
     params.recordingFps = 1000;
-    DrivingController c(params);
+    return params;
+}
+}
 
+TEST(DrivingController, StartsRecordingOnFirstMotion) {
+    DrivingController c(fastParams(std::chrono::seconds(2)));
     auto t = Clock::now();
-    // Idle frames don't record.
-    CHECK(!c.onFrame(t, false));
-    CHECK(c.state() == DrivingController::State::Idle);
+    EXPECT_FALSE(c.onFrame(t, false));
+    EXPECT_EQ(c.state(), State::Idle);
 
-    // First motion starts recording immediately.
     t += std::chrono::milliseconds(200);
-    CHECK(c.onFrame(t, true));
-    CHECK(c.state() == DrivingController::State::Recording);
+    EXPECT_TRUE(c.onFrame(t, true));
+    EXPECT_EQ(c.state(), State::Recording);
+}
 
-    // Motion just under the timeout keeps recording.
+TEST(DrivingController, MotionWithinTimeoutKeepsRecording) {
+    DrivingController c(fastParams(std::chrono::seconds(2)));
+    auto t = Clock::now();
+    c.onFrame(t, true);
     for (int i = 0; i < 4; i++) {
-        t += std::chrono::milliseconds(500); // 0.5s intervals, timeout is 2s
-        CHECK(c.onFrame(t, i % 2 == 0 ? true : false));
+        t += std::chrono::milliseconds(500);
+        EXPECT_TRUE(c.onFrame(t, i % 2 == 0)); // motion every 1s, timeout is 2s
     }
-    CHECK(c.state() == DrivingController::State::Recording);
+    EXPECT_EQ(c.state(), State::Recording);
+}
 
-    // No motion for just under N (last motion was 1.0s ago): still recording.
-    t += std::chrono::milliseconds(500);
-    CHECK(c.onFrame(t, false));
-    CHECK(c.state() == DrivingController::State::Recording);
+TEST(DrivingController, StopsAfterTimeoutAndRestarts) {
+    DrivingController c(fastParams(std::chrono::seconds(2)));
+    auto t = Clock::now();
+    c.onFrame(t, true);                       // motion at t
+    t += std::chrono::milliseconds(1000);
+    EXPECT_TRUE(c.onFrame(t, false));         // 1.0s without motion: still recording
+    t += std::chrono::milliseconds(1200);     // 2.2s without motion
+    EXPECT_FALSE(c.onFrame(t, false));
+    EXPECT_EQ(c.state(), State::Idle);
 
-    // Past N (last motion now ~2.1s ago): stop.
-    t += std::chrono::milliseconds(1200);
-    CHECK(!c.onFrame(t, false));
-    CHECK(c.state() == DrivingController::State::Idle);
-
-    // Can restart on new motion.
     t += std::chrono::milliseconds(100);
-    CHECK(c.onFrame(t, true));
-    CHECK(c.state() == DrivingController::State::Recording);
+    EXPECT_TRUE(c.onFrame(t, true));          // new motion restarts recording
+    EXPECT_EQ(c.state(), State::Recording);
+}
 
-    // Pacing: with recordingFps=20, next deadline ~50ms out.
-    DrivingController::Params p2;
-    p2.recordingFps = 20;
-    p2.idleFps = 2;
-    DrivingController pacer(p2);
-    auto t2 = Clock::now();
-    pacer.onFrame(t2, false);
-    auto wait = pacer.timeUntilNextCapture(t2);
-    CHECK(wait >= std::chrono::milliseconds(450)); // idle: 1/2 s
-    pacer.onFrame(t2, true);
-    wait = pacer.timeUntilNextCapture(t2);
-    CHECK(wait <= std::chrono::milliseconds(60)); // recording: 1/20 s
-    CHECK(wait >= std::chrono::milliseconds(40));
+TEST(DrivingController, PacingMatchesState) {
+    DrivingController::Params p;
+    p.recordingFps = 20;                      // 50ms period
+    p.idleFps = 2;                            // 500ms period
+    DrivingController c(p);
+    auto t = Clock::now();
+    c.onFrame(t, false);
+    EXPECT_GE(c.timeUntilNextCapture(t), std::chrono::milliseconds(450));
+    c.onFrame(t, true);
+    auto wait = c.timeUntilNextCapture(t);
+    EXPECT_LE(wait, std::chrono::milliseconds(60));
+    EXPECT_GE(wait, std::chrono::milliseconds(40));
+}
 
-    // Never negative in the past.
-    CHECK(pacer.timeUntilNextCapture(t2 + std::chrono::hours(1)) == std::chrono::microseconds::zero());
-
-    TEST_RESULT();
+TEST(DrivingController, PacingNeverNegative) {
+    DrivingController c(DrivingController::Params{});
+    auto t = Clock::now();
+    c.onFrame(t, false);
+    EXPECT_EQ(c.timeUntilNextCapture(t + std::chrono::hours(1)), std::chrono::microseconds::zero());
 }
