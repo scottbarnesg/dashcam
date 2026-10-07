@@ -4,11 +4,10 @@
 #include "motion.hpp"
 #include "video.hpp"
 
-void recordVideo(USBCamera* camera, MotionDetector* detector) {
+void recordVideo(Camera* camera, MotionDetector* detector) {
     std::chrono::seconds recordingDuration(10);
     VideoWriter writer = VideoWriter("videos/");
     std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
-    // TODO: Update this loop to keep recording as long as motion is detected
     while ((std::chrono::system_clock::now() - startTime) < recordingDuration) {
         // Capture the frame and add it to the video
         auto frame = camera->captureImage();
@@ -23,17 +22,22 @@ void recordVideo(USBCamera* camera, MotionDetector* detector) {
     detector->reset();
 }
 
-int main() {
-    USBCamera camera = USBCamera();
+int main(int argc, char* argv[]) {
+    std::string backend = "usb";
+    if (argc > 1) {
+        backend = argv[1];
+    }
+    auto camera = createCamera(backend);
     MotionDetector motionDetector = MotionDetector();
     std::chrono::milliseconds captureDelay(500); // Interval between frames being captured to check for motion
+    std::cout << "Dashcam started with camera backend: " << camera->name() << std::endl;
     while (true) {
         std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
-        auto frame = camera.captureImage();
+        auto frame = camera->captureImage();
         motionDetector.addFrame(frame);
         if (motionDetector.motionDetected()) {
             std::cout << "Motion detected! Recording video..." << std::endl;
-            recordVideo(&camera, &motionDetector);
+            recordVideo(camera.get(), &motionDetector);
             std::cout << "Done recording video." << std::endl;
         }
         std::chrono::duration elapsed = std::chrono::system_clock::now() - startTime;
