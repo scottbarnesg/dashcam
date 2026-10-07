@@ -19,7 +19,7 @@ State machine: `IDLE` → first motion starts recording → `RECORDING` → stop
 
 - Make N an explicit named constant/config (proposed start: 120s; tune in vehicle). Motion *starts* recording immediately; only *stopping* uses the large N (asymmetric would be a later refinement).
 - Fix the existing bug in the extension loop: motion must update "last motion seen" every frame, not reset a duration each hit — with a long N the current logic is fine, but verify timeout math is driven by `motionLastDetected()` which already exists and is unused.
-- Frame pacing while recording: current loop captures as fast as possible with no delay; add a max capture rate so driving clips don't run the CPU at 100% (target ~10–15 fps vs the idle loop's 2 fps).
+- Frame pacing while recording: current loop captures as fast as possible with no delay; add a max capture rate so driving clips don't run the CPU at 100% (target 30 fps vs the idle loop's 2 fps).
 - Threshold sanity while driving: verify `motionThreshold` fires at night and doesn't false-trigger on sun/shadow flicker at speed (tune in vehicle; log detected "fps" and trigger rate).
 - Update PROJECT.md "Current status" once implemented.
 

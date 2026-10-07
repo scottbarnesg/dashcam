@@ -11,7 +11,7 @@ struct Config {
     std::filesystem::path videoDir = "videos";
     int noMotionTimeoutSeconds = 120;      // N for the driving state machine
     double idleFps = 2.0;
-    double recordingFps = 12.0;
+    double recordingFps = 30.0;
     int motionThreshold = 10000;           // min contour area (px) to count as motion
     int segmentLengthSeconds = 120;        // power-loss-safe segment size (item 3)
 

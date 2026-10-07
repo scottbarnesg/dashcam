@@ -13,7 +13,7 @@ class DrivingController {
         struct Params {
             std::chrono::seconds noMotionTimeout{120};   // N: stop recording after this long without motion
             double idleFps = 2.0;                        // capture rate while idle
-            double recordingFps = 12.0;                  // capture rate while recording
+            double recordingFps = 30.0;                  // capture rate while recording
         };
 
         enum class State { Idle, Recording };

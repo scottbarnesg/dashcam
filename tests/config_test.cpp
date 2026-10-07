@@ -9,7 +9,7 @@ TEST(Config, DefaultsWhenFileMissing) {
     Config defaults = Config::load("does_not_exist.conf");
     EXPECT_EQ(defaults.cameraBackend, "usb");
     EXPECT_EQ(defaults.noMotionTimeoutSeconds, 120);
-    EXPECT_DOUBLE_EQ(defaults.recordingFps, 12.0);
+    EXPECT_DOUBLE_EQ(defaults.recordingFps, 30.0);
 }
 
 class ConfigTest : public ::testing::Test {
