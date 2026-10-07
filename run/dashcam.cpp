@@ -5,7 +5,9 @@
 #include "camera.hpp"
 #include "config.hpp"
 #include "driving.hpp"
+#include "manifest.hpp"
 #include "motion.hpp"
+#include "recovery.hpp"
 #include "video.hpp"
 
 // Motion-as-driving proxy (BACKLOG item 2): motion starts recording; recording
@@ -13,6 +15,16 @@
 int main(int argc, char* argv[]) {
     std::filesystem::path configPath = argc > 1 ? argv[1] : "dashcam.conf";
     Config config = Config::load(configPath);
+
+    // Boot recovery (item 3): quarantine segments left open by a power cut,
+    // then rebuild manifest entries for any completed file not yet registered.
+    quarantineIncompleteSegments(config.videoDir);
+    Manifest manifest(config.videoDir);
+    manifest.load();
+    std::size_t recovered = manifest.rebuildFromDisk();
+    if (recovered > 0) {
+        std::cout << "Recovery: registered " << recovered << " unregistered recording(s) in the manifest" << std::endl;
+    }
 
     auto camera = createCamera(config.cameraBackend);
     MotionDetector motionDetector = MotionDetector(config.motionThreshold);
@@ -36,7 +48,11 @@ int main(int argc, char* argv[]) {
             if (recording) {
                 if (!writer) {
                     std::cout << "Motion detected! Recording video..." << std::endl;
-                    writer = std::make_unique<VideoWriter>(config.videoDir);
+                    VideoWriter::SegmentOptions seg;
+                    seg.lengthSeconds = config.segmentLengthSeconds;
+                    seg.context = "seg";
+                    seg.manifest = &manifest;
+                    writer = std::make_unique<VideoWriter>(config.videoDir, seg);
                 }
                 writer->addFrame(frame);
             } else if (writer) {
