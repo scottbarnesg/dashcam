@@ -197,6 +197,11 @@ void PiCamera::Impl::configureStream() {
     LStreamConfiguration& streamConfig = config->at(0);
     streamConfig.size.width = kTargetWidth;
     streamConfig.size.height = kTargetHeight;
+    // Request semi-planar NV12 explicitly. On the Pi the ISP delivers NV12
+    // even when the stream negotiates planar YUV420, which the planar
+    // converter then reads as garbage chroma (green bands). rpicam-apps
+    // always uses NV12 for the same reason.
+    streamConfig.pixelFormat = libcamera::formats::NV12;
     if (config->validate() == LCameraConfiguration::Invalid) {
         throw std::runtime_error("libcamera: requested stream configuration is not supported");
     }
@@ -312,8 +317,8 @@ cv::Mat PiCamera::Impl::convertNv12(const Planes& planes) {
         // Assemble a contiguous NV12 image (handles padded strides and
         // separately-allocated planes), then convert with OpenCV.
         cv::Mat yuv(height * 3 / 2, width, CV_8UC1);
-        const unsigned char* y = static_cast<const unsigned char*>(yMap);
-        const unsigned char* uv = static_cast<const unsigned char*>(uvMap);
+        const unsigned char* y = planeData(yMap, planes[0]);
+        const unsigned char* uv = planeData(uvMap, planes[1]);
         for (unsigned int row = 0; row < height; row++) {
             std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
         }
@@ -341,18 +346,22 @@ cv::Mat PiCamera::Impl::convertI420(const Planes& planes) {
         unsigned int yStride = stride > 0 ? stride : width;
         unsigned int cStride = yStride / 2;
         cv::Mat yuv(height * 3 / 2, width, CV_8UC1);
-        const unsigned char* y = static_cast<const unsigned char*>(yMap);
-        const unsigned char* u = static_cast<const unsigned char*>(uMap);
-        const unsigned char* v = static_cast<const unsigned char*>(vMap);
+        const unsigned char* y = planeData(yMap, planes[0]);
+        const unsigned char* u = planeData(uMap, planes[1]);
+        const unsigned char* v = planeData(vMap, planes[2]);
         for (unsigned int row = 0; row < height; row++) {
             std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
         }
-        // OpenCV's I420 Mat layout is Y (height x width) followed by height/2
-        // rows of width bytes, each row = U row (width/2) then V row (width/2).
+        // OpenCV reads a 3H/2 x W I420 Mat as FLAT PLANAR: Y (W*H bytes),
+        // then U (W/2 * H/2), then V - verified against COLOR_BGR2YUV_I420
+        // output (its chroma Mat rows are 2 packed chroma lines each).
+        unsigned int chromaWidth = width / 2;
+        unsigned char* chroma = yuv.data + (std::size_t)height * width;
+        unsigned char* uDst = chroma;
+        unsigned char* vDst = chroma + (std::size_t)chromaWidth * (height / 2);
         for (unsigned int row = 0; row < height / 2; row++) {
-            unsigned char* dst = yuv.row(height + row).ptr();
-            std::memcpy(dst, u + (std::size_t)row * cStride, width / 2);
-            std::memcpy(dst + width / 2, v + (std::size_t)row * cStride, width / 2);
+            std::memcpy(uDst + (std::size_t)row * chromaWidth, u + (std::size_t)row * cStride, chromaWidth);
+            std::memcpy(vDst + (std::size_t)row * chromaWidth, v + (std::size_t)row * cStride, chromaWidth);
         }
         dumpFrame(yuv, "i420");
         cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_I420);
@@ -372,7 +381,7 @@ cv::Mat PiCamera::Impl::convertJpeg(const Planes& planes,
         auto span = metadata.planes();
         std::size_t bytes = span.empty() ? planes[0].length : span[0].bytesused;
         bytes = std::min(bytes, static_cast<std::size_t>(planes[0].length));
-        const unsigned char* begin = static_cast<const unsigned char*>(map);
+        const unsigned char* begin = planeData(map, planes[0]);
         std::vector<unsigned char> encoded(begin, begin + bytes);
         result = cv::imdecode(encoded, cv::IMREAD_COLOR);
     }
