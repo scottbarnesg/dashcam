@@ -72,9 +72,14 @@ class PiCamera::Impl {
         void configureStream();
         void allocateRequests();
         cv::Mat convert(LFrameBuffer* buffer);
-        cv::Mat convertNv12(const std::vector<LFrameBuffer::Plane>& planes);
-        cv::Mat convertI420(const std::vector<LFrameBuffer::Plane>& planes);
-        cv::Mat convertJpeg(const std::vector<LFrameBuffer::Plane>& planes, const LFrameMetadata& metadata);
+        // Templated on the plane container: std::vector<Plane> on libcamera
+        // 0.2 (Bookworm's older releases), Span<const Plane> on 0.3+.
+        template <typename Planes>
+        cv::Mat convertNv12(const Planes& planes);
+        template <typename Planes>
+        cv::Mat convertI420(const Planes& planes);
+        template <typename Planes>
+        cv::Mat convertJpeg(const Planes& planes, const LFrameMetadata& metadata);
         static void* mapPlane(const LFrameBuffer::Plane& plane);
         static void unmapPlane(void* address, const LFrameBuffer::Plane& plane);
 };
@@ -159,11 +164,12 @@ void PiCamera::Impl::chooseCamera() {
         if (!found || found->acquire() < 0) {
             continue;
         }
-        std::string model = found->properties().get(libcamera::properties::Model).value_or("unknown");
+        auto model = found->properties().get(libcamera::properties::Model);
+        std::string modelString = model ? std::string(model->data(), model->size()) : "unknown";
         std::unique_ptr<LCameraConfiguration> attempt =
             found->generateConfiguration({libcamera::StreamRole::VideoRecording});
         if (attempt && attempt->validate() != LCameraConfiguration::Invalid) {
-            std::cout << "PiCamera: using camera '" << model << "' (" << candidate->id() << ")" << std::endl;
+            std::cout << "PiCamera: using camera '" << modelString << "' (" << candidate->id() << ")" << std::endl;
             camera = found;
             config = std::move(attempt);
             return;
@@ -223,7 +229,9 @@ void PiCamera::Impl::unmapPlane(void* address, const LFrameBuffer::Plane& plane)
 
 cv::Mat PiCamera::Impl::convert(LFrameBuffer* buffer) {
     const LFrameMetadata& metadata = buffer->metadata();
-    const std::vector<LFrameBuffer::Plane>& planes = buffer->planes();
+    // Return type differs by libcamera version (vector vs Span); let the
+    // compiler deduce it and instantiate the templated helpers to match.
+    auto&& planes = buffer->planes();
     if (metadata.status != LFrameMetadata::FrameSuccess || planes.empty()) {
         return cv::Mat();
     }
@@ -236,7 +244,8 @@ cv::Mat PiCamera::Impl::convert(LFrameBuffer* buffer) {
     return convertI420(planes);
 }
 
-cv::Mat PiCamera::Impl::convertNv12(const std::vector<LFrameBuffer::Plane>& planes) {
+template <typename Planes>
+cv::Mat PiCamera::Impl::convertNv12(const Planes& planes) {
     if (planes.size() < 2) {
         return cv::Mat();
     }
@@ -267,7 +276,8 @@ cv::Mat PiCamera::Impl::convertNv12(const std::vector<LFrameBuffer::Plane>& plan
     return result;
 }
 
-cv::Mat PiCamera::Impl::convertI420(const std::vector<LFrameBuffer::Plane>& planes) {
+template <typename Planes>
+cv::Mat PiCamera::Impl::convertI420(const Planes& planes) {
     if (planes.size() < 3) {
         return cv::Mat();
     }
@@ -297,7 +307,8 @@ cv::Mat PiCamera::Impl::convertI420(const std::vector<LFrameBuffer::Plane>& plan
     return result;
 }
 
-cv::Mat PiCamera::Impl::convertJpeg(const std::vector<LFrameBuffer::Plane>& planes,
+template <typename Planes>
+cv::Mat PiCamera::Impl::convertJpeg(const Planes& planes,
                                     const LFrameMetadata& metadata) {
     void* map = mapPlane(planes[0]);
     cv::Mat result;
