@@ -94,6 +94,7 @@ class PiCamera::Impl {
         template <typename Planes>
         cv::Mat convertJpeg(const Planes& planes, const LFrameMetadata& metadata);
         static void* mapPlane(const LFrameBuffer::Plane& plane);
+        static const unsigned char* planeData(void* address, const LFrameBuffer::Plane& plane);
         static void unmapPlane(void* address, const LFrameBuffer::Plane& plane);
 };
 
@@ -252,12 +253,19 @@ void PiCamera::Impl::dumpFrame(const cv::Mat& yuv, const char* fmt) {
 }
 
 void* PiCamera::Impl::mapPlane(const LFrameBuffer::Plane& plane) {
-    return mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+    // Planes may be sub-buffers of one shared allocation (observed on the Pi:
+    // U and V share luma's buffer at non-zero offsets), so the mapping must
+    // span plane.offset + plane.length; the data itself starts at offset.
+    return mmap(nullptr, plane.offset + plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+}
+
+const unsigned char* PiCamera::Impl::planeData(void* address, const LFrameBuffer::Plane& plane) {
+    return static_cast<const unsigned char*>(address) + plane.offset;
 }
 
 void PiCamera::Impl::unmapPlane(void* address, const LFrameBuffer::Plane& plane) {
     if (address != MAP_FAILED) {
-        munmap(address, plane.length);
+        munmap(address, plane.offset + plane.length);
     }
 }
 
