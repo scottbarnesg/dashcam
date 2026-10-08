@@ -2,6 +2,7 @@
 #include "recovery.hpp"
 #include "video.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <gtest/gtest.h>
 #include <opencv2/videoio.hpp>
@@ -25,13 +26,8 @@ void feedFrames(VideoWriter& w, int n, int width = 160, int height = 120) {
 }
 
 int countVideos(const fs::path& dir) {
-    int n = 0;
-    for (const auto& e : fs::directory_iterator(dir)) {
-        if (e.path().extension() == ".mp4") {
-            n++;
-        }
-    }
-    return n;
+    return std::count_if(fs::directory_iterator(dir), fs::directory_iterator{},
+                         [](const fs::directory_entry& e) { return e.path().extension() == ".mp4"; });
 }
 
 } // namespace

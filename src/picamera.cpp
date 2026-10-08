@@ -1,91 +1,320 @@
-// Pi Camera Module capture backend. Only compiled when configured with -DUSE_PI_CAMERA=ON.
+// Pi Camera Module capture backend using libcamera directly, implemented per
+// the libcamera Application Writer's Guide (docs.libcamera.org). Only built
+// with -DUSE_PI_CAMERA=ON (requires libcamera-dev).
 //
-// Implemented per the Raspberry Pi camera software documentation: rpicam-vid supports
-// "--codec mjpeg" writing an MJPEG (raw JPEG stream) to stdout when given "-o -".
-// We spawn the process and decode each JPEG from the stream with cv::imdecode.
-// Docs: https://www.raspberrypi.com/documentation/computers/camera_software.html#rpicam-vid
+// Flow per the guide: CameraManager::start -> acquire camera ->
+// generateConfiguration(VideoRecording) -> validate -> configure ->
+// FrameBufferAllocator -> one Request per buffer -> start + queueRequest ->
+// requestCompleted signal -> map planes, convert to BGR, requeue.
 
 #include "camera_impl.hpp"
 
 #ifdef USE_PI_CAMERA
 
-#include <algorithm>
-#include <algorithm>
-#include <array>
-#include <cstdio>
-#include <stdexcept>
+#include <atomic>
+#include <cstring>
+#include <iostream>
+#include <map>
+#include <memory>
 #include <vector>
 
-#include <opencv2/imgcodecs.hpp>
+#include <sys/mman.h>
 #include <unistd.h>
 
-namespace {
-constexpr int kPiWidth = 1280;
-constexpr int kPiHeight = 720;
-constexpr int kPiFps = 20;
-}
+#include <libcamera/libcamera.h>
 
-PiCamera::PiCamera() {
-    std::array<char, 512> cmd;
-    std::snprintf(cmd.data(), cmd.size(),
-                  "rpicam-vid -t 0 -o - --codec mjpeg --width %d --height %d --framerate %d --quality 85 2>/dev/null",
-                  kPiWidth, kPiHeight, kPiFps);
-    pipe = popen(cmd.data(), "r");
-    if (!pipe) {
-        throw std::runtime_error("Could not start rpicam-vid");
-    }
-    if (!pump()) {
-        throw std::runtime_error("rpicam-vid produced no video (is the camera enabled in raspi-config?)");
-    }
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include "queue.hpp"
+
+// The project defines its own Camera interface; alias the libcamera types
+// instead of pulling in the whole namespace.
+using LCamera = libcamera::Camera;
+using LCameraConfiguration = libcamera::CameraConfiguration;
+using LCameraManager = libcamera::CameraManager;
+using LFrameBuffer = libcamera::FrameBuffer;
+using LFrameBufferAllocator = libcamera::FrameBufferAllocator;
+using LFrameMetadata = libcamera::FrameMetadata;
+using LPixelFormat = libcamera::PixelFormat;
+using LRequest = libcamera::Request;
+using LStream = libcamera::Stream;
+using LStreamConfiguration = libcamera::StreamConfiguration;
+
+class PiCamera::Impl {
+    public:
+        explicit Impl();
+        ~Impl();
+
+        void requestComplete(LRequest* request);
+
+        SafeQueue<cv::Mat> frames{kQueueCapacity};
+        std::atomic<bool> running{false};
+
+    private:
+        friend class PiCamera;
+
+        static constexpr std::size_t kQueueCapacity = 8;
+        static constexpr unsigned int kTargetWidth = 1280;
+        static constexpr unsigned int kTargetHeight = 720;
+
+        LCameraManager manager;
+        std::shared_ptr<LCamera> camera;
+        std::unique_ptr<LCameraConfiguration> config;
+        std::unique_ptr<LFrameBufferAllocator> allocator;
+        LStream* stream = nullptr;
+        std::vector<std::unique_ptr<LRequest>> requests;
+
+        LPixelFormat pixelFormat;
+        unsigned int width = 0;
+        unsigned int height = 0;
+        unsigned int stride = 0;
+
+        void chooseCamera();
+        void configureStream();
+        void allocateRequests();
+        cv::Mat convert(LFrameBuffer* buffer);
+        cv::Mat convertNv12(const std::vector<LFrameBuffer::Plane>& planes);
+        cv::Mat convertI420(const std::vector<LFrameBuffer::Plane>& planes);
+        cv::Mat convertJpeg(const std::vector<LFrameBuffer::Plane>& planes, const LFrameMetadata& metadata);
+        static void* mapPlane(const LFrameBuffer::Plane& plane);
+        static void unmapPlane(void* address, const LFrameBuffer::Plane& plane);
+};
+
+PiCamera::PiCamera() : impl(new Impl()) {
 }
 
 PiCamera::~PiCamera() {
-    if (pipe) {
-        pclose(pipe);
-    }
-}
-
-// Read bytes until at least one complete JPEG (SOI..EOI) is available in buffer.
-bool PiCamera::pump() {
-    static const unsigned char kJpegStart[3] = {0xFF, 0xD8, 0xFF};
-    static const unsigned char kJpegEnd[2] = {0xFF, 0xD9};
-    unsigned char chunk[16384];
-    for (;;) {
-        auto begin = buffer.data();
-        std::size_t size = buffer.size();
-        // Already have a complete JPEG?
-        if (size >= 5) {
-            const unsigned char* soi = std::search(begin, begin + size, kJpegStart, kJpegStart + 3);
-            if (soi != begin + size) {
-                const unsigned char* eoi = std::search(soi + 3, begin + size, kJpegEnd, kJpegEnd + 2);
-                if (eoi != begin + size) {
-                    return true;
-                }
-            }
-        }
-        std::size_t n = std::fread(chunk, 1, sizeof(chunk), pipe);
-        if (n == 0) {
-            return false;
-        }
-        buffer.insert(buffer.end(), chunk, chunk + n);
-    }
+    delete impl;
 }
 
 cv::Mat PiCamera::captureImage() {
-    static const unsigned char kJpegStart[3] = {0xFF, 0xD8, 0xFF};
-    static const unsigned char kJpegEnd[2] = {0xFF, 0xD9};
-    if (!pump()) {
+    return impl->frames.pop();
+}
+
+void PiCamera::Impl::requestComplete(LRequest* request) {
+    // Runs on the libcamera event thread: convert, hand off, requeue; never block.
+    if (request->status() != LRequest::RequestCancelled) {
+        for (auto& bufferPair : request->buffers()) {
+            cv::Mat frame = convert(bufferPair.second);
+            if (!frame.empty()) {
+                frames.push(frame); // Drops when full; the camera never blocks.
+            }
+        }
+    }
+    if (running) {
+        request->reuse(LRequest::ReuseBuffers);
+        camera->queueRequest(request);
+    }
+}
+
+PiCamera::Impl::Impl() {
+    if (manager.start() < 0) {
+        throw std::runtime_error("libcamera: could not start CameraManager");
+    }
+    try {
+        chooseCamera();
+        configureStream();
+        allocateRequests();
+    } catch (...) {
+        if (camera) {
+            camera->release();
+            camera.reset();
+        }
+        manager.stop();
+        throw;
+    }
+
+    camera->requestCompleted.connect(this, &PiCamera::Impl::requestComplete);
+    running = true;
+    if (camera->start() < 0) {
+        running = false;
+        throw std::runtime_error("libcamera: could not start camera");
+    }
+    for (std::unique_ptr<LRequest>& request : requests) {
+        if (camera->queueRequest(request.get()) < 0) {
+            running = false;
+            throw std::runtime_error("libcamera: could not queue request");
+        }
+    }
+    std::cout << "PiCamera: streaming " << width << "x" << height << " "
+              << pixelFormat.toString() << std::endl;
+}
+
+PiCamera::Impl::~Impl() {
+    // Order per the guide: stop camera, free buffers, release camera, stop manager.
+    running = false;
+    frames.close();
+    if (camera) {
+        camera->stop();
+        if (allocator && stream) {
+            allocator->free(stream);
+        }
+        allocator.reset();
+        camera->release();
+        camera.reset();
+    }
+    manager.stop();
+}
+
+void PiCamera::Impl::chooseCamera() {
+    for (const std::shared_ptr<LCamera>& candidate : manager.cameras()) {
+        std::shared_ptr<LCamera> found = manager.get(candidate->id());
+        if (!found || found->acquire() < 0) {
+            continue;
+        }
+        std::string model = found->properties().get(libcamera::properties::Model).value_or("unknown");
+        std::unique_ptr<LCameraConfiguration> attempt =
+            found->generateConfiguration({libcamera::StreamRole::VideoRecording});
+        if (attempt && attempt->validate() != LCameraConfiguration::Invalid) {
+            std::cout << "PiCamera: using camera '" << model << "' (" << candidate->id() << ")" << std::endl;
+            camera = found;
+            config = std::move(attempt);
+            return;
+        }
+        found->release();
+    }
+    throw std::runtime_error("libcamera: no usable camera found (is it enabled in raspi-config?)");
+}
+
+void PiCamera::Impl::configureStream() {
+    LStreamConfiguration& streamConfig = config->at(0);
+    streamConfig.size.width = kTargetWidth;
+    streamConfig.size.height = kTargetHeight;
+    if (config->validate() == LCameraConfiguration::Invalid) {
+        throw std::runtime_error("libcamera: requested stream configuration is not supported");
+    }
+    if (camera->configure(config.get()) < 0) {
+        throw std::runtime_error("libcamera: could not apply stream configuration");
+    }
+    stream = streamConfig.stream();
+    pixelFormat = streamConfig.pixelFormat;
+    width = streamConfig.size.width;
+    height = streamConfig.size.height;
+    stride = streamConfig.stride;
+    if (pixelFormat != libcamera::formats::NV12 && pixelFormat != libcamera::formats::YUV420 &&
+        pixelFormat != libcamera::formats::MJPEG) {
+        throw std::runtime_error("libcamera: unsupported pixel format " + pixelFormat.toString());
+    }
+}
+
+void PiCamera::Impl::allocateRequests() {
+    allocator = std::make_unique<LFrameBufferAllocator>(camera);
+    if (allocator->allocate(stream) < 0) {
+        throw std::runtime_error("libcamera: could not allocate frame buffers");
+    }
+    for (const std::unique_ptr<LFrameBuffer>& buffer : allocator->buffers(stream)) {
+        std::unique_ptr<LRequest> request = camera->createRequest();
+        if (!request) {
+            throw std::runtime_error("libcamera: could not create request");
+        }
+        if (request->addBuffer(stream, buffer.get()) < 0) {
+            throw std::runtime_error("libcamera: could not attach buffer to request");
+        }
+        requests.push_back(std::move(request));
+    }
+}
+
+void* PiCamera::Impl::mapPlane(const LFrameBuffer::Plane& plane) {
+    return mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+}
+
+void PiCamera::Impl::unmapPlane(void* address, const LFrameBuffer::Plane& plane) {
+    if (address != MAP_FAILED) {
+        munmap(address, plane.length);
+    }
+}
+
+cv::Mat PiCamera::Impl::convert(LFrameBuffer* buffer) {
+    const LFrameMetadata& metadata = buffer->metadata();
+    const std::vector<LFrameBuffer::Plane>& planes = buffer->planes();
+    if (metadata.status != LFrameMetadata::FrameSuccess || planes.empty()) {
         return cv::Mat();
     }
-    const unsigned char* begin = buffer.data();
-    const unsigned char* end = begin + buffer.size();
-    const unsigned char* soi = std::search(begin, end, kJpegStart, kJpegStart + 3);
-    const unsigned char* eoi = std::search(soi + 3, end, kJpegEnd, kJpegEnd + 2);
-    const std::size_t consumed = (eoi + 2) - begin;
-    std::vector<unsigned char> jpeg;
-    jpeg.assign(buffer.begin(), buffer.begin() + consumed);
-    buffer.erase(buffer.begin(), buffer.begin() + consumed);
-    return cv::imdecode(jpeg, cv::IMREAD_COLOR);
+    if (pixelFormat == libcamera::formats::MJPEG) {
+        return convertJpeg(planes, metadata);
+    }
+    if (pixelFormat == libcamera::formats::NV12) {
+        return convertNv12(planes);
+    }
+    return convertI420(planes);
+}
+
+cv::Mat PiCamera::Impl::convertNv12(const std::vector<LFrameBuffer::Plane>& planes) {
+    if (planes.size() < 2) {
+        return cv::Mat();
+    }
+    void* yMap = mapPlane(planes[0]);
+    void* uvMap = mapPlane(planes[1]);
+    cv::Mat result;
+    if (yMap != MAP_FAILED && uvMap != MAP_FAILED) {
+        unsigned int yStride = stride > 0 ? stride : width;
+        unsigned int uvStride = planes[1].length / (height / 2);
+        if (uvStride < width) {
+            uvStride = width;
+        }
+        // Assemble a contiguous NV12 image (handles padded strides and
+        // separately-allocated planes), then convert with OpenCV.
+        cv::Mat yuv(height * 3 / 2, width, CV_8UC1);
+        const unsigned char* y = static_cast<const unsigned char*>(yMap);
+        const unsigned char* uv = static_cast<const unsigned char*>(uvMap);
+        for (unsigned int row = 0; row < height; row++) {
+            std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
+        }
+        for (unsigned int row = 0; row < height / 2; row++) {
+            std::memcpy(yuv.row(height + row).ptr(), uv + (std::size_t)row * uvStride, width);
+        }
+        cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_NV12);
+    }
+    unmapPlane(yMap, planes[0]);
+    unmapPlane(uvMap, planes[1]);
+    return result;
+}
+
+cv::Mat PiCamera::Impl::convertI420(const std::vector<LFrameBuffer::Plane>& planes) {
+    if (planes.size() < 3) {
+        return cv::Mat();
+    }
+    void* yMap = mapPlane(planes[0]);
+    void* uMap = mapPlane(planes[1]);
+    void* vMap = mapPlane(planes[2]);
+    cv::Mat result;
+    if (yMap != MAP_FAILED && uMap != MAP_FAILED && vMap != MAP_FAILED) {
+        unsigned int yStride = stride > 0 ? stride : width;
+        unsigned int cStride = yStride / 2;
+        cv::Mat yuv(height * 3 / 2, width, CV_8UC1);
+        const unsigned char* y = static_cast<const unsigned char*>(yMap);
+        const unsigned char* u = static_cast<const unsigned char*>(uMap);
+        const unsigned char* v = static_cast<const unsigned char*>(vMap);
+        for (unsigned int row = 0; row < height; row++) {
+            std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
+        }
+        for (unsigned int row = 0; row < height / 2; row++) {
+            std::memcpy(yuv.row(height + row).ptr(), u + (std::size_t)row * cStride, width / 2);
+            std::memcpy(yuv.row(height + height / 2 + row).ptr(), v + (std::size_t)row * cStride, width / 2);
+        }
+        cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_I420);
+    }
+    unmapPlane(yMap, planes[0]);
+    unmapPlane(uMap, planes[1]);
+    unmapPlane(vMap, planes[2]);
+    return result;
+}
+
+cv::Mat PiCamera::Impl::convertJpeg(const std::vector<LFrameBuffer::Plane>& planes,
+                                    const LFrameMetadata& metadata) {
+    void* map = mapPlane(planes[0]);
+    cv::Mat result;
+    if (map != MAP_FAILED) {
+        auto span = metadata.planes();
+        std::size_t bytes = span.empty() ? planes[0].length : span[0].bytesused;
+        bytes = std::min(bytes, static_cast<std::size_t>(planes[0].length));
+        const unsigned char* begin = static_cast<const unsigned char*>(map);
+        std::vector<unsigned char> encoded(begin, begin + bytes);
+        result = cv::imdecode(encoded, cv::IMREAD_COLOR);
+    }
+    unmapPlane(map, planes[0]);
+    return result;
 }
 
 #endif

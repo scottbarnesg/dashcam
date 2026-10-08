@@ -7,7 +7,7 @@ Items are roughly in priority order.
 Add capture support for the Pi Camera Module while keeping USB webcam support for desktop dev/testing. Selection happens at build time (e.g., CMake option `USE_LIBCAMERA` vs OpenCV `VideoCapture`), behind a common `Camera` interface so `dashcam.cpp` and the motion detector are backend-agnostic.
 
 - Define a `Camera` abstract interface; refactor `USBCamera` to implement it.
-- Implement a `PiCamera` backend (libcamera-vid / `rpicam-vid` subprocess or libcamera API).
+- Implement a `PiCamera` backend — DONE: direct libcamera (Application Writer's Guide flow: CameraManager, VideoRecording role, FrameBufferAllocator, requestCompleted; NV12/I420/MJPEG to BGR).
 - CMake option to select backend; default to USB on desktop, Pi camera on Pi.
 - Verify motion detection still works with Pi camera output (resolution/format differences).
 
@@ -78,4 +78,4 @@ Connectivity is intermittent: files accumulate while driving (offline), offload 
 - Secondary/fallback driving triggers — GPS speed, MPU-6050 IMU (in hand; needs no-solder wiring via Grove SHAT or jumpers for dev), or ACC-switched power.
 - Watchdog/heartbeat and graceful shutdown for vehicle power loss.
 - SD wear reduction (read-only rootfs, batched writes).
-- Hardware H.264 encoding path for low-power Pi targets (Pi camera can output H.264 natively via `rpicam-vid`).
+- Hardware H.264 encoding path for low-power Pi targets (libcamera encode-stream role, avoiding CPU decode/re-encode).

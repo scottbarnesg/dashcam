@@ -12,7 +12,7 @@ clean:
 	rm -rf build
 
 lint:
-	cppcheck --enable=all --suppress=missingIncludeSystem -I src/ -I include/ src/ include/ run/
+	cppcheck --enable=all --suppress=missingIncludeSystem --suppress=unusedFunction -I src/ -I include/ src/ include/ run/ tests/
 
 install:
 	make build
@@ -25,7 +25,7 @@ install:
 
 
 install-deps:
-	sudo apt install -y cppcheck build-essential cmake pkg-config git libssl-dev libopencv-dev
+	sudo apt install -y cppcheck build-essential cmake pkg-config git libssl-dev libopencv-dev libcamera-dev
 
 certs:
 	mkdir -p certs

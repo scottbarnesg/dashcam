@@ -28,7 +28,7 @@ The system operates in an **intermittently connected environment**:
   motion starts recording; recording continues until no motion is seen for a
   configurable timeout (default 120s). Mid-drive fragmentation at stops is accepted.
 - Capture runs behind a `Camera` interface with USB (dev), simulated (tests), and
-  Pi Camera Module (`rpicam-vid` MJPEG pipe, build option `USE_PI_CAMERA`) backends.
+  Pi Camera Module (direct libcamera, build option `USE_PI_CAMERA`) backends.
 - Recording is **power-loss-safe**: fixed-length self-closing segments with a
   write sentinel, boot-time quarantine of incomplete files, and free-space checks.
 - A **manifest** (`manifest.jsonl`, atomic writes, SHA-256 per file, rebuildable)

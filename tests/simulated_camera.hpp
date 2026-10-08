@@ -13,7 +13,7 @@
 // "moving". Lives in tests/ on purpose - never compiled into the binary.
 class SimulatedCamera : public Camera {
     public:
-        SimulatedCamera(int width = 640, int height = 480) : frameWidth(width), frameHeight(height) {}
+        explicit SimulatedCamera(int width = 640, int height = 480) : frameWidth(width), frameHeight(height) {}
         cv::Mat captureImage() override {
             cv::Mat frame(frameHeight, frameWidth, CV_8UC3, cv::Scalar(30, 60, 90));
             if (_moving) {

@@ -5,9 +5,9 @@ project(dashcam VERSION 0.0.1 DESCRIPTION "dashcam" LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-# Camera backend selection: ON for Raspberry Pi with Pi Camera Module (requires rpicam-vid),
+# Camera backend selection: ON for Raspberry Pi with Pi Camera Module (requires libcamera-dev),
 # OFF (default) for USB camera development on a desktop.
-option(USE_PI_CAMERA "Build with Pi Camera Module support (rpicam-vid)" OFF)
+option(USE_PI_CAMERA "Build with Pi Camera Module support via libcamera (requires libcamera-dev)" OFF)
 # Build executable
 file(GLOB SOURCES "src/*cpp")
 add_executable(${PROJECT_NAME} run/dashcam.cpp)
@@ -16,8 +16,18 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/s
 # Link libraries
 find_package(OpenSSL REQUIRED)
 find_package(OpenCV REQUIRED)
+# libcamera (Pi Camera Module backend)
+if(USE_PI_CAMERA)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBCAMERA REQUIRED libcamera)
+endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${OpenCV_LIBS})
+if(USE_PI_CAMERA)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_PI_CAMERA)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBCAMERA_LIBRARIES})
+endif()
 
 # Tests: single googletest binary, opt-in (not part of the default build).
 option(BUILD_TESTS "Build unit tests (downloads googletest at configure time)" OFF)
@@ -34,6 +44,11 @@ if(BUILD_TESTS)
     target_sources(dashcam_tests PRIVATE ${SOURCES})
     target_include_directories(dashcam_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(dashcam_tests PRIVATE OpenSSL::SSL ${OpenCV_LIBS} GTest::gtest GTest::gtest_main)
+    if(USE_PI_CAMERA)
+        target_compile_definitions(dashcam_tests PRIVATE USE_PI_CAMERA)
+        target_include_directories(dashcam_tests PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
+        target_link_libraries(dashcam_tests PRIVATE ${LIBCAMERA_LIBRARIES})
+    endif()
     # Register each gtest case with ctest so it reports/lists them individually.
     include(GoogleTest)
     gtest_discover_tests(dashcam_tests)

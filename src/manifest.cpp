@@ -5,6 +5,7 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <iterator>
 
 #include <opencv2/videoio.hpp>
 
@@ -170,9 +171,8 @@ bool Manifest::remove(const std::string& file) {
 std::vector<ManifestEntry> Manifest::entries() const {
     std::vector<ManifestEntry> out;
     out.reserve(records.size());
-    for (const auto& kv : records) {
-        out.push_back(kv.second);
-    }
+    std::transform(records.begin(), records.end(), std::back_inserter(out),
+                   [](const auto& kv) { return kv.second; });
     std::sort(out.begin(), out.end(), [](const ManifestEntry& a, const ManifestEntry& b) {
         return a.startedAt == b.startedAt ? a.file < b.file : a.startedAt < b.startedAt;
     });

@@ -21,9 +21,11 @@ class USBCamera : public Camera {
 // Synthetic camera for tests lives in tests/simulated_camera.hpp (test-only).
 
 #ifdef USE_PI_CAMERA
-// Captures from the Pi Camera Module by piping the MJPEG byte stream produced by
-// "rpicam-vid --codec mjpeg -o -" into memory and decoding each JPEG frame.
-// See BACKLOG item 1; implemented per Raspberry Pi camera software docs.
+// Captures from the Pi Camera Module using libcamera directly, following the
+// libcamera Application Writer's Guide (docs.libcamera.org). Uses the
+// VideoRecording stream role, maps completed frame buffers, and converts
+// NV12 / YUV420 / MJPEG output to BGR Mats. Requires -DUSE_PI_CAMERA=ON and
+// the libcamera-dev package.
 class PiCamera : public Camera {
     public:
         PiCamera();
@@ -31,9 +33,8 @@ class PiCamera : public Camera {
         cv::Mat captureImage() override;
         std::string name() const override { return "pi"; }
     private:
-        bool pump(); // Read from the pipe until at least one full JPEG is buffered.
-        FILE* pipe = nullptr;
-        std::vector<unsigned char> buffer;
+        class Impl; // All libcamera types live in picamera.cpp.
+        Impl* impl = nullptr;
 };
 #endif
 
