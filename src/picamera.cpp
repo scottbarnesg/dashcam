@@ -10,7 +10,10 @@
 #include "camera.hpp"
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <optional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -64,13 +67,23 @@ class PiCamera::Impl {
         std::vector<std::unique_ptr<LRequest>> requests;
 
         LPixelFormat pixelFormat;
+        std::optional<libcamera::ColorSpace> streamColorSpace;
         unsigned int width = 0;
         unsigned int height = 0;
         unsigned int stride = 0;
+        bool loggedPlanes = false;
 
         void chooseCamera();
         void configureStream();
         void allocateRequests();
+        // Debug aid: PICAMERA_DEBUG_DUMP=N writes the first N assembled raw
+        // frames to /tmp/picamera_dump_NNN.yuv (contiguous format-native layout)
+        // and logs per-plane lengths. Used to diagnose conversion artifacts.
+        void dumpFrame(const cv::Mat& yuv, const char* fmt);
+        unsigned int dumpCount = 0;
+        unsigned int dumpLimit = 0xFFFFFFFF;
+        bool dumpChecked = false;
+        unsigned int dumpIndex = 0;
         cv::Mat convert(LFrameBuffer* buffer);
         // Templated on the plane container: std::vector<Plane> on libcamera
         // 0.2 (Bookworm's older releases), Span<const Plane> on 0.3+.
@@ -194,6 +207,11 @@ void PiCamera::Impl::configureStream() {
     width = streamConfig.size.width;
     height = streamConfig.size.height;
     stride = streamConfig.stride;
+    streamColorSpace = streamConfig.colorSpace;
+    std::cout << "PiCamera: negotiated " << width << "x" << height
+              << " format=" << pixelFormat.toString()
+              << " stride=" << stride
+              << " frameSize=" << streamConfig.frameSize << std::endl;
     if (pixelFormat != libcamera::formats::NV12 && pixelFormat != libcamera::formats::YUV420 &&
         pixelFormat != libcamera::formats::MJPEG) {
         throw std::runtime_error("libcamera: unsupported pixel format " + pixelFormat.toString());
@@ -217,6 +235,22 @@ void PiCamera::Impl::allocateRequests() {
     }
 }
 
+void PiCamera::Impl::dumpFrame(const cv::Mat& yuv, const char* fmt) {
+    if (!dumpChecked) {
+        dumpChecked = true;
+        const char* env = std::getenv("PICAMERA_DEBUG_DUMP");
+        dumpLimit = env ? static_cast<unsigned int>(std::atoi(env)) : 0;
+    }
+    if (dumpCount >= dumpLimit) {
+        return;
+    }
+    char path[64];
+    std::snprintf(path, sizeof(path), "/tmp/picamera_dump_%03u.yuv", dumpIndex++);
+    std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(yuv.data), yuv.total());
+    dumpCount++;
+    (void)fmt;
+}
+
 void* PiCamera::Impl::mapPlane(const LFrameBuffer::Plane& plane) {
     return mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
 }
@@ -234,6 +268,15 @@ cv::Mat PiCamera::Impl::convert(LFrameBuffer* buffer) {
     auto&& planes = buffer->planes();
     if (metadata.status != LFrameMetadata::FrameSuccess || planes.empty()) {
         return cv::Mat();
+    }
+    if (!loggedPlanes) {
+        loggedPlanes = true;
+        std::cout << "PiCamera: first frame planes=" << planes.size();
+        for (const auto& plane : planes) {
+            std::cout << " len=" << plane.length << " offset=" << plane.offset;
+        }
+        std::cout << " colorSpace="
+                  << (streamColorSpace ? streamColorSpace->toString() : std::string("none")) << std::endl;
     }
     if (pixelFormat == libcamera::formats::MJPEG) {
         return convertJpeg(planes, metadata);
@@ -269,6 +312,7 @@ cv::Mat PiCamera::Impl::convertNv12(const Planes& planes) {
         for (unsigned int row = 0; row < height / 2; row++) {
             std::memcpy(yuv.row(height + row).ptr(), uv + (std::size_t)row * uvStride, width);
         }
+        dumpFrame(yuv, "nv12");
         cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_NV12);
     }
     unmapPlane(yMap, planes[0]);
@@ -302,6 +346,7 @@ cv::Mat PiCamera::Impl::convertI420(const Planes& planes) {
             std::memcpy(dst, u + (std::size_t)row * cStride, width / 2);
             std::memcpy(dst + width / 2, v + (std::size_t)row * cStride, width / 2);
         }
+        dumpFrame(yuv, "i420");
         cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_I420);
     }
     unmapPlane(yMap, planes[0]);
