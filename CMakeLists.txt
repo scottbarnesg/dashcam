@@ -34,5 +34,7 @@ if(BUILD_TESTS)
     target_sources(dashcam_tests PRIVATE ${SOURCES})
     target_include_directories(dashcam_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(dashcam_tests PRIVATE OpenSSL::SSL ${OpenCV_LIBS} GTest::gtest GTest::gtest_main)
-    add_test(NAME dashcam_tests COMMAND dashcam_tests)
+    # Register each gtest case with ctest so it reports/lists them individually.
+    include(GoogleTest)
+    gtest_discover_tests(dashcam_tests)
 endif()
