@@ -50,6 +50,7 @@ int main(int argc, char* argv[]) {
                     std::cout << "Motion detected! Recording video..." << std::endl;
                     VideoWriter::SegmentOptions seg;
                     seg.lengthSeconds = config.segmentLengthSeconds;
+                    seg.recordingFps = static_cast<int>(config.recordingFps);
                     seg.context = "seg";
                     seg.manifest = &manifest;
                     writer = std::make_unique<VideoWriter>(config.videoDir, seg);

@@ -28,6 +28,7 @@ class VideoWriter {
     public:
         struct SegmentOptions {
             int lengthSeconds = 120;       // Close and roll to a new file every N seconds.
+            int recordingFps = 0;          // Authoritative playback rate; 0 = estimate from frame timing.
             std::string context = "seg";   // Naming context (see naming.hpp).
             std::uintmax_t minFreeBytes = 100ULL * 1024 * 1024; // Pause instead of filling the card.
             Manifest* manifest = nullptr;  // Closed segments registered here (optional).

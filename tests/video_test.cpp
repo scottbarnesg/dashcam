@@ -60,6 +60,28 @@ TEST(VideoWriter, ClosesValidFileAndIgnoresEmptyFrames) {
     fs::remove_all(dir);
 }
 
+TEST(VideoWriter, UsesConfiguredRecordingFpsForPlayback) {
+    fs::path dir = "test_videos_fps";
+    fs::remove_all(dir);
+    {
+        VideoWriter::SegmentOptions opts;
+        opts.recordingFps = 24; // Authoritative; the 20ms feed would estimate ~50.
+        VideoWriter writer(dir, opts);
+        feedFrames(writer, 30);
+    }
+    fs::path produced;
+    for (const auto& e : fs::directory_iterator(dir)) {
+        if (e.path().extension() == ".mp4") {
+            produced = e.path();
+        }
+    }
+    ASSERT_FALSE(produced.empty());
+    cv::VideoCapture cap(produced);
+    ASSERT_TRUE(cap.isOpened());
+    EXPECT_NEAR(cap.get(cv::CAP_PROP_FPS), 24.0, 1.0);
+    fs::remove_all(dir);
+}
+
 TEST(VideoWriter, RollsSelfClosingSegmentsRegisteredInManifest) {
     fs::path dir = "test_videos_segments";
     fs::remove_all(dir);

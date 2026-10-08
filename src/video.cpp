@@ -97,7 +97,10 @@ void VideoWriter::openSegment(std::chrono::system_clock::time_point frameTime, c
     sentinelPath = segmentPath;
     sentinelPath += ".writing";
     std::ofstream(sentinelPath).close(); // Marker: file exists but is not yet closed.
-    int fps = calculateFPS();
+    // Prefer the configured recording rate for playback timing: estimating from
+    // frame arrival is wrong for the first segment, whose warm-up window straddles
+    // the slow idle->recording transition and yields a spurious ~1 fps.
+    int fps = options.recordingFps > 0 ? options.recordingFps : calculateFPS();
     std::cout << "VideoWriter: opening segment " << name << " at " << fps << " fps" << std::endl;
     int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
     segmentWriter = cv::VideoWriter(segmentPath, fourcc, fps, frameSize);
