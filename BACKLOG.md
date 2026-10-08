@@ -73,6 +73,30 @@ Connectivity is intermittent: files accumulate while driving (offline), offload 
 - ~~`VideoWriter` destructor hang~~ — DONE (`SafeQueue::close()` wakes blocked consumers).
 - Fix `configure-service.sh` (appends a literal sed command into the unit file instead of executing it) and `make install` invoking `make build` non-recursively.
 
+## 7. Camera orientation / rotation
+
+On the Pi the recordings play back rotated 90 degrees: the imx219 sensor's
+native orientation differs from the physical mounting, and the capture path
+ignores orientation entirely. Colors are now correct; only the rotation is
+wrong. Every recorded clip is affected, so this is a correctness fix, not an
+enhancement.
+
+- Read the camera's orientation from libcamera (`properties::Orientation`, a
+  `ControlEnum` with `Rotate_0/90/180/270` and transpose variants — the same
+  property `rpicam-apps` honors) at configure time.
+- Apply the matching rotation in the `PiCamera` converter after BGR conversion
+  (`cv::rotate`), so both motion detection and the writer consume correctly
+  oriented frames. Applies to all capture formats (NV12/I420/MJPEG), so do it
+  post-conversion, once.
+- Add a config override (`camera_orientation = auto | 0 | 90 | 180 | 270 |
+  mirror-*`) for physical mounting that differs from the sensor's reported
+  orientation, or sensors that don't report it (some clones).
+- Unit-test the orientation->`cv::RotateCode` mapping (a pure function, easy to
+  test); rotation correctness itself is verified on-device.
+- Related but separate: the stream negotiates Rec.709 while we convert with
+  OpenCV's BT.601 coefficients — a mild color shift, not rotation. Track as its
+  own item; a hardware-encode path (Later) would sidestep both conversions.
+
 ## Later / ideas
 
 - Secondary/fallback driving triggers — GPS speed, MPU-6050 IMU (in hand; needs no-solder wiring via Grove SHAT or jumpers for dev), or ACC-switched power.
