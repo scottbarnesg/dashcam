@@ -2,3 +2,6 @@
 build
 videos
 systemd/dashcam.service
+dashcam.conf
+t.conf
+testvid
