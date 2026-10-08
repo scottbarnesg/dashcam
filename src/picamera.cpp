@@ -295,9 +295,12 @@ cv::Mat PiCamera::Impl::convertI420(const Planes& planes) {
         for (unsigned int row = 0; row < height; row++) {
             std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
         }
+        // OpenCV's I420 Mat layout is Y (height x width) followed by height/2
+        // rows of width bytes, each row = U row (width/2) then V row (width/2).
         for (unsigned int row = 0; row < height / 2; row++) {
-            std::memcpy(yuv.row(height + row).ptr(), u + (std::size_t)row * cStride, width / 2);
-            std::memcpy(yuv.row(height + height / 2 + row).ptr(), v + (std::size_t)row * cStride, width / 2);
+            unsigned char* dst = yuv.row(height + row).ptr();
+            std::memcpy(dst, u + (std::size_t)row * cStride, width / 2);
+            std::memcpy(dst + width / 2, v + (std::size_t)row * cStride, width / 2);
         }
         cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_I420);
     }
