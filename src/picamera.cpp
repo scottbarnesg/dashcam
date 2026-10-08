@@ -1,13 +1,13 @@
 // Pi Camera Module capture backend using libcamera directly, implemented per
-// the libcamera Application Writer's Guide (docs.libcamera.org). Only built
-// (requires libcamera-dev).
+// the libcamera Application Writer's Guide (docs.libcamera.org). Requires
+// libcamera-dev.
 //
 // Flow per the guide: CameraManager::start -> acquire camera ->
 // generateConfiguration(VideoRecording) -> validate -> configure ->
 // FrameBufferAllocator -> one Request per buffer -> start + queueRequest ->
 // requestCompleted signal -> map planes, convert to BGR, requeue.
 
-#include "camera_impl.hpp"
+#include "camera.hpp"
 
 #include <atomic>
 #include <cstring>

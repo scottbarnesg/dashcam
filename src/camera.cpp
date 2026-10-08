@@ -2,8 +2,6 @@
 
 #include <stdexcept>
 
-#include "camera_impl.hpp"
-
 std::unique_ptr<Camera> createCamera(const std::string& backend) {
     if (backend == "pi") {
         return std::make_unique<PiCamera>();
