@@ -25,7 +25,7 @@ install:
 
 
 install-deps:
-	sudo apt install -y cppcheck build-essential cmake pkg-config git libssl-dev libopencv-dev libcamera-dev
+	sudo apt install -y cppcheck build-essential cmake pkg-config git libssl-dev libopencv-dev libcamera-dev libcamera-dev
 
 certs:
 	mkdir -p certs

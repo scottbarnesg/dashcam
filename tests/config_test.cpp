@@ -7,7 +7,7 @@ namespace fs = std::filesystem;
 
 TEST(Config, DefaultsWhenFileMissing) {
     Config defaults = Config::load("does_not_exist.conf");
-    EXPECT_EQ(defaults.cameraBackend, "usb");
+    EXPECT_EQ(defaults.cameraBackend, "pi");
     EXPECT_EQ(defaults.noMotionTimeoutSeconds, 120);
     EXPECT_DOUBLE_EQ(defaults.recordingFps, 30.0);
 }

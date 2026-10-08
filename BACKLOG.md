@@ -8,7 +8,7 @@ Add capture support for the Pi Camera Module while keeping USB webcam support fo
 
 - Define a `Camera` abstract interface; refactor `USBCamera` to implement it.
 - Implement a `PiCamera` backend — DONE: direct libcamera (Application Writer's Guide flow: CameraManager, VideoRecording role, FrameBufferAllocator, requestCompleted; NV12/I420/MJPEG to BGR).
-- CMake option to select backend; default to USB on desktop, Pi camera on Pi.
+- libcamera is the only production backend (single code path; USB webcams work through it too). USBCamera/V4L2-direct removed.
 - Verify motion detection still works with Pi camera output (resolution/format differences).
 
 ## 2. Driving mode — motion-as-driving proxy — DONE

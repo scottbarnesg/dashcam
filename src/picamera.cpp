@@ -1,6 +1,6 @@
 // Pi Camera Module capture backend using libcamera directly, implemented per
 // the libcamera Application Writer's Guide (docs.libcamera.org). Only built
-// with -DUSE_PI_CAMERA=ON (requires libcamera-dev).
+// (requires libcamera-dev).
 //
 // Flow per the guide: CameraManager::start -> acquire camera ->
 // generateConfiguration(VideoRecording) -> validate -> configure ->
@@ -8,8 +8,6 @@
 // requestCompleted signal -> map planes, convert to BGR, requeue.
 
 #include "camera_impl.hpp"
-
-#ifdef USE_PI_CAMERA
 
 #include <atomic>
 #include <cstring>
@@ -81,12 +79,10 @@ class PiCamera::Impl {
         static void unmapPlane(void* address, const LFrameBuffer::Plane& plane);
 };
 
-PiCamera::PiCamera() : impl(new Impl()) {
+PiCamera::PiCamera() : impl(std::make_unique<Impl>()) {
 }
 
-PiCamera::~PiCamera() {
-    delete impl;
-}
+PiCamera::~PiCamera() = default;
 
 cv::Mat PiCamera::captureImage() {
     return impl->frames.pop();
@@ -95,7 +91,7 @@ cv::Mat PiCamera::captureImage() {
 void PiCamera::Impl::requestComplete(LRequest* request) {
     // Runs on the libcamera event thread: convert, hand off, requeue; never block.
     if (request->status() != LRequest::RequestCancelled) {
-        for (auto& bufferPair : request->buffers()) {
+        for (const auto& bufferPair : request->buffers()) {
             cv::Mat frame = convert(bufferPair.second);
             if (!frame.empty()) {
                 frames.push(frame); // Drops when full; the camera never blocks.
@@ -317,4 +313,3 @@ cv::Mat PiCamera::Impl::convertJpeg(const std::vector<LFrameBuffer::Plane>& plan
     return result;
 }
 
-#endif

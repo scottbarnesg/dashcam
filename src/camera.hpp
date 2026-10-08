@@ -6,8 +6,8 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
-// Abstract capture interface. Backends: USBCamera (dev/test), PiCamera (rpicam-vid, Pi only),
-// SimulatedCamera (synthetic frames for tests).
+// Abstract capture interface. Production backend: PiCamera (libcamera).
+// Tests use SimulatedCamera (tests/simulated_camera.hpp).
 class Camera {
     public:
         virtual ~Camera() = default;
@@ -16,7 +16,7 @@ class Camera {
         virtual std::string name() const = 0;
 };
 
-// Factory: "usb" | "pi" ("pi" only available when built with -DUSE_PI_CAMERA=ON).
+// Factory: "pi" (libcamera).
 std::unique_ptr<Camera> createCamera(const std::string& backend);
 
 #endif

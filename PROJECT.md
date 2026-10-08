@@ -27,8 +27,9 @@ The system operates in an **intermittently connected environment**:
 - Driving trigger implemented as a **motion-as-driving proxy** (BACKLOG item 2):
   motion starts recording; recording continues until no motion is seen for a
   configurable timeout (default 120s). Mid-drive fragmentation at stops is accepted.
-- Capture runs behind a `Camera` interface with USB (dev), simulated (tests), and
-  Pi Camera Module (direct libcamera, build option `USE_PI_CAMERA`) backends.
+- Capture runs behind a `Camera` interface with a single production backend:
+  libcamera (Pi Camera Module and any libcamera-supported camera, including
+  UVC webcams); tests use a simulated camera.
 - Recording is **power-loss-safe**: fixed-length self-closing segments with a
   write sentinel, boot-time quarantine of incomplete files, and free-space checks.
 - A **manifest** (`manifest.jsonl`, atomic writes, SHA-256 per file, rebuildable)

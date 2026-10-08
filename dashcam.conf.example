@@ -4,9 +4,9 @@
 # shown are the built-in defaults. Unknown keys and invalid values are
 # reported to stderr and ignored.
 
-# Camera backend: usb (development) | pi (Pi Camera Module, requires a build
-# with -DUSE_PI_CAMERA=ON).
-camera_backend = usb
+# Camera backend: pi (libcamera; works with the Pi Camera Module and any
+# camera libcamera supports, including UVC webcams).
+camera_backend = pi
 
 # Where recordings and manifest.jsonl are written (relative to the working
 # directory, or absolute).
@@ -18,7 +18,7 @@ video_dir = videos
 no_motion_timeout_seconds = 120
 
 # Frame capture rate while idle (watching for motion) and while recording.
-idle_fps = 2.0
+idle_fps = 5.0
 recording_fps = 30.0
 
 # Minimum contour area, in pixels, that a frame difference must exceed to
