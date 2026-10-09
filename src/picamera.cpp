@@ -55,7 +55,11 @@ class PiCamera::Impl {
 
         void requestComplete(LRequest* request);
 
-        SafeQueue<RawFrame> frames{kQueueCapacity};
+        // DropOldest: when the pipeline samples below sensor rate (idle fps,
+        // or a transient consumer stall) the freshest frames must survive —
+        // DropNewest would freeze the queue contents and deliver a lagging,
+        // timestamp-compressed view of reality.
+        SafeQueue<RawFrame> frames{kQueueCapacity, SafeQueue<RawFrame>::Overflow::DropOldest};
         std::atomic<bool> running{false};
         std::atomic_flag tornDown = ATOMIC_FLAG_INIT;
 

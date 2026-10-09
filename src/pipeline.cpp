@@ -65,7 +65,7 @@ void Pipeline::stop() {
         std::cout << "Pipeline stopped: motion-stage drops=" << motionQueue.dropCount()
                   << " record-stage drops=" << recordQueue.dropCount()
                   << " camera-queue drops=" << cameraQueueDrops()
-                  << " (idle-rate sampling drops camera frames by design)" << std::endl;
+                  << " (expected whenever the sensor outpaces the sampled rate)" << std::endl;
     }
     runCv.notify_all();
 }
