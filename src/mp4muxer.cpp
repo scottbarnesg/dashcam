@@ -239,7 +239,7 @@ bool Mp4Muxer::writeHeader(const uint8_t* annexB, std::size_t size) {
     return true;
 }
 
-void Mp4Muxer::write(const uint8_t* annexB, std::size_t size, bool keyframe) {
+void Mp4Muxer::write(const uint8_t* annexB, std::size_t size, bool keyframe, std::int64_t captureUs) {
     if (!opened || failed) {
         return;
     }
@@ -262,13 +262,23 @@ void Mp4Muxer::write(const uint8_t* annexB, std::size_t size, bool keyframe) {
     }
     std::memcpy(packet->data, scratch.data(), scratch.size());
     packet->stream_index = stream->index;
-    AVRational frameRate{1, fps};
-    packet->pts = packet->dts = av_rescale_q(nextPts, frameRate, stream->time_base);
-    packet->duration = av_rescale_q(nextPts + 1, frameRate, stream->time_base) - packet->pts;
-    if (packet->duration < 1) {
-        packet->duration = 1;
+    std::int64_t pts;
+    if (captureUs >= 0) {
+        if (!haveFirstCapture) {
+            haveFirstCapture = true;
+            firstCaptureUs = captureUs;
+        }
+        pts = av_rescale_q(captureUs - firstCaptureUs, AVRational{1, 1000000}, stream->time_base);
+    } else {
+        pts = av_rescale_q(nextPts, AVRational{1, fps}, stream->time_base);
     }
+    if (pts <= lastPts) {
+        pts = lastPts + 1; // Strict monotonicity guard (duplicate/zero stamps).
+    }
+    packet->pts = packet->dts = pts;
+    packet->duration = 1; // One timebase tick; capture-time gaps live in the PTS.
     nextPts++;
+    lastPts = pts;
     if (keyframe || idr) {
         packet->flags |= AV_PKT_FLAG_KEY;
     }
@@ -321,7 +331,7 @@ bool Mp4Muxer::writeHeader(const uint8_t*, std::size_t) {
     return false;
 }
 
-void Mp4Muxer::write(const uint8_t*, std::size_t, bool) {
+void Mp4Muxer::write(const uint8_t*, std::size_t, bool, std::int64_t) {
 }
 
 void Mp4Muxer::close() {

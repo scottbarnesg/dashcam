@@ -33,6 +33,10 @@ The system operates in an **intermittently connected environment**:
   (NV12) — motion detection uses the luma plane, no BGR conversion in the hot path.
 - Recording uses the Pi's hardware H.264 codec (V4L2 M2M) into fragmented
   MP4 (`encoder = auto|hw|sw`, software fallback automatic).
+- Capture runs as a three-stage threaded pipeline (`pipeline.hpp`):
+  ingest (frames out of the camera, never blocks) -> motion/control
+  (detection + state machine) -> record (owns the VideoWriter and its
+  flush-on-close), connected by bounded queues with counted drops.
 - Recording is **power-loss-safe**: fixed-length self-closing segments with a
   write sentinel, boot-time quarantine of incomplete files, and free-space checks.
 - A **manifest** (`manifest.jsonl`, atomic writes, SHA-256 per file, rebuildable)

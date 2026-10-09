@@ -1,17 +1,15 @@
-#include <chrono>
 #include <iostream>
-#include <thread>
 
 #include "camera.hpp"
 #include "config.hpp"
-#include "driving.hpp"
 #include "manifest.hpp"
-#include "motion.hpp"
+#include "pipeline.hpp"
 #include "recovery.hpp"
-#include "video.hpp"
 
-// Motion-as-driving proxy (BACKLOG item 2): motion starts recording; recording
-// continues until no motion has been seen for the no-motion timeout N.
+// Motion-as-driving-proxy state machine (BACKLOG item 2), now staged across
+// three threads (pipeline.hpp): capture ingest, motion/control, and
+// recording, so slow motion analysis can never starve the recorder or block
+// frame intake.
 int main(int argc, char* argv[]) {
     std::filesystem::path configPath = argc > 1 ? argv[1] : "dashcam.conf";
     Config config = Config::load(configPath);
@@ -27,45 +25,24 @@ int main(int argc, char* argv[]) {
     }
 
     auto camera = createCamera(config.cameraBackend);
-    MotionDetector motionDetector = MotionDetector(config.motionThreshold);
-    DrivingController::Params params;
-    params.noMotionTimeout = std::chrono::seconds(config.noMotionTimeoutSeconds);
-    params.idleFps = config.idleFps;
-    params.recordingFps = config.recordingFps;
-    DrivingController controller = DrivingController(params);
+    std::string backend = camera->name();
 
-    std::cout << "Dashcam started with camera backend: " << camera->name() << std::endl;
+    Pipeline::Options options;
+    options.motionThreshold = config.motionThreshold;
+    options.driving.noMotionTimeout = std::chrono::seconds(config.noMotionTimeoutSeconds);
+    options.driving.idleFps = config.idleFps;
+    options.driving.recordingFps = config.recordingFps;
+    options.videoDir = config.videoDir;
+    options.segments.lengthSeconds = config.segmentLengthSeconds;
+    options.segments.recordingFps = static_cast<int>(config.recordingFps);
+    options.segments.context = "seg";
+    options.segments.manifest = &manifest;
+    options.segments.encoder = config.encoder;
+    options.segments.bitrateKbps = config.videoBitrateKbps;
+    options.segments.gopSeconds = config.videoGopSeconds;
 
-    std::unique_ptr<VideoWriter> writer;
-    while (true) {
-        auto now = std::chrono::system_clock::now();
-        auto frame = camera->captureImage();
-        if (frame.empty()) {
-            std::cerr << "Warning: capture returned no frame, skipping" << std::endl;
-        } else {
-            motionDetector.addFrame(frame);
-            bool recording = controller.onFrame(now, motionDetector.motionDetected());
-            if (recording) {
-                if (!writer) {
-                    std::cout << "Motion detected! Recording video..." << std::endl;
-                    VideoWriter::SegmentOptions seg;
-                    seg.lengthSeconds = config.segmentLengthSeconds;
-                    seg.recordingFps = static_cast<int>(config.recordingFps);
-                    seg.context = "seg";
-                    seg.manifest = &manifest;
-                    seg.encoder = config.encoder;
-                    seg.bitrateKbps = config.videoBitrateKbps;
-                    seg.gopSeconds = config.videoGopSeconds;
-                    writer = std::make_unique<VideoWriter>(config.videoDir, seg);
-                }
-                writer->addFrame(frame);
-            } else if (writer) {
-                writer.reset(); // Destructor flushes buffered frames and closes the file.
-                motionDetector.reset();
-                std::cout << "Done recording video." << std::endl;
-            }
-        }
-        std::this_thread::sleep_for(controller.timeUntilNextCapture(std::chrono::system_clock::now()));
-    }
+    Pipeline pipeline(std::move(camera), options);
+    std::cout << "Dashcam started with camera backend: " << backend << std::endl;
+    pipeline.run(); // Blocks until interrupted (SIGINT terminates, as before).
     return 0;
 }

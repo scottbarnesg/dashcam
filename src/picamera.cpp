@@ -49,10 +49,15 @@ class PiCamera::Impl {
         explicit Impl();
         ~Impl();
 
+        // Idempotent shutdown (see definition): safe from any thread, runs at
+        // most once (first caller wins).
+        void teardown();
+
         void requestComplete(LRequest* request);
 
         SafeQueue<RawFrame> frames{kQueueCapacity};
         std::atomic<bool> running{false};
+        std::atomic_flag tornDown = ATOMIC_FLAG_INIT;
 
     private:
         friend class PiCamera;
@@ -110,6 +115,14 @@ RawFrame PiCamera::captureImage() {
     return impl->frames.pop();
 }
 
+void PiCamera::stop() {
+    impl->teardown();
+}
+
+std::size_t PiCamera::queueDrops() const {
+    return impl->frames.dropCount();
+}
+
 void PiCamera::Impl::requestComplete(LRequest* request) {
     // Runs on the libcamera event thread: assemble, hand off, requeue; never block.
     if (request->status() != LRequest::RequestCancelled) {
@@ -160,7 +173,16 @@ PiCamera::Impl::Impl() {
 }
 
 PiCamera::Impl::~Impl() {
-    // Order per the guide: stop camera, free buffers, release camera, stop manager.
+    teardown();
+}
+
+void PiCamera::Impl::teardown() {
+    // Idempotent: PiCamera::stop() and the destructor may both run (stop
+    // unblocks a captureImage that is parked in pop(); the destructor then
+    // finds nothing left to do).
+    if (tornDown.test_and_set()) {
+        return;
+    }
     running = false;
     frames.close();
     if (camera) {

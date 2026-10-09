@@ -51,9 +51,11 @@ class Mp4Muxer {
         // Throws std::runtime_error when the file/stream cannot be created.
         void open();
 
-        // Muxes one encoded access unit. Constant-frame-rate timing (one
-        // sample per frame, timebase 1/fps), matching the capture pacing.
-        void write(const uint8_t* annexB, std::size_t size, bool keyframe);
+        // Muxes one encoded access unit. PTS come from the capture timestamp
+        // when >= 0 (variable frame rate: transient input stalls become PTS
+        // gaps instead of sped-up playback); negative stamps fall back to a
+        // constant 1/fps cadence.
+        void write(const uint8_t* annexB, std::size_t size, bool keyframe, std::int64_t captureUs = -1);
 
         // Writes the trailer (flushes the last fragment) and releases
         // everything. Safe to call more than once / after failed open.
@@ -70,12 +72,15 @@ class Mp4Muxer {
         int width, height, fps;
         void* formatContext = nullptr; // AVFormatContext* (kept out of header)
         void* ioContext = nullptr;     // AVIOContext*
-        bool opened = false;
-        bool headerWritten = false;
-        bool failed = false;
-        std::string errorMessage;
-        std::int64_t nextPts = 0;
-        std::vector<std::uint8_t> scratch;
+    bool opened = false;
+    bool headerWritten = false;
+    bool failed = false;
+    std::string errorMessage;
+    std::int64_t nextPts = 0;
+    std::int64_t firstCaptureUs = 0;
+    bool haveFirstCapture = false;
+    std::int64_t lastPts = -1;
+    std::vector<std::uint8_t> scratch;
 
         void fail(const std::string& message);
 };

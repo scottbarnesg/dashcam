@@ -18,6 +18,14 @@ std::int64_t epochUs(std::chrono::system_clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
 }
 
+// Capture time when the frame carries one, wall time otherwise (BGR/dev
+// inputs). Segment boundaries and PTS follow the capture clock so segment
+// lengths and playback speed track real time even when a stage stalls.
+std::chrono::system_clock::time_point frameTime(const RawFrame& frame) {
+    return frame.timestamp == std::chrono::system_clock::time_point{} ? std::chrono::system_clock::now()
+                                                                      : frame.timestamp;
+}
+
 // YUV (packed, per frame.hpp) -> BGR for the software encoder path.
 void toBgr(const RawFrame& frame, cv::Mat& out) {
     switch (frame.format) {
@@ -145,8 +153,8 @@ void VideoWriter::openSegment(std::chrono::system_clock::time_point frameTime, c
             muxer->open();
             encoder = std::make_unique<H264Encoder>(params);
             Mp4Muxer* m = muxer.get();
-            encoder->setOutputCallback([m](const uint8_t* data, std::size_t size_, bool keyframe, std::int64_t) {
-                m->write(data, size_, keyframe);
+            encoder->setOutputCallback([m](const uint8_t* data, std::size_t size_, bool keyframe, std::int64_t captureUs) {
+                m->write(data, size_, keyframe, captureUs);
             });
             usingHw = true;
         } catch (const std::exception& e) {
@@ -236,9 +244,7 @@ void VideoWriter::submitFrame(RawFrame& frame) {
             cv::cvtColor(frame.data, yuv, cv::COLOR_BGR2YUV_I420);
             data = &yuv;
         }
-        auto stamp = frame.timestamp == std::chrono::system_clock::time_point{} ? getCurrentTime()
-                                                                                 : frame.timestamp;
-        if (encoder->encode(*data, epochUs(stamp))) {
+        if (encoder->encode(*data, epochUs(frameTime(frame)))) {
             segmentFrames++;
         } else {
             droppedFrameCount++;
@@ -264,7 +270,7 @@ void VideoWriter::writeToFile() {
         }
         warmup.push_back(std::move(frame));
     }
-    openSegment(getCurrentTime(), warmup.front());
+    openSegment(frameTime(warmup.front()), warmup.front());
     for (RawFrame& frame : warmup) {
         submitFrame(frame);
     }
@@ -274,10 +280,10 @@ void VideoWriter::writeToFile() {
             break; // Buffer closed and drained.
         }
         bool segmentActive = usingHw || segmentWriter.isOpened();
-        auto frameTime = getCurrentTime();
-        if (segmentActive && frameTime - segmentStart >= std::chrono::seconds(options.lengthSeconds)) {
+        auto stamp = frameTime(frame);
+        if (segmentActive && stamp - segmentStart >= std::chrono::seconds(options.lengthSeconds)) {
             closeSegment(); // Self-closing segment: durable across power loss.
-            openSegment(frameTime, frame);
+            openSegment(stamp, frame);
         }
         if (usingHw && encoder->failed()) {
             // Encode-side failure (e.g. codec node died): roll the segment so

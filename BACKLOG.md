@@ -97,6 +97,20 @@ enhancement.
   OpenCV's BT.601 coefficients — a mild color shift, not rotation. Track as its
   own item; a hardware-encode path (Later) would sidestep both conversions.
 
+## 8. Frame pipeline threading (post-hw-encode bottleneck)
+
+After hardware encoding landed, the single main loop was still the
+bottleneck: full-resolution `findContours` (motion detection) ran inline,
+capping the whole pipeline at ~15 fps, silently dropping frames in the
+camera queue, and CFR muxing turned that into ~2x-speed playback.
+
+- ~~Decouple frame intake from computation~~ — DONE: three-stage `Pipeline`
+  (ingest / motion+control / record) with bounded queues; the record stage
+  owns the `VideoWriter` (its draining destructor can no longer stall the
+  motion stage); camera queue drops are now counted, not silent.
+- Muxer now stamps capture-time PTS (a stall becomes a PTS gap, not sped-up
+  playback).
+
 ## Later / ideas
 
 - Secondary/fallback driving triggers — GPS speed, MPU-6050 IMU (in hand; needs no-solder wiring via Grove SHAT or jumpers for dev), or ACC-switched power.
