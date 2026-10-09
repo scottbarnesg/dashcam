@@ -53,5 +53,7 @@ if(BUILD_TESTS)
     endif()
     # Register each gtest case with ctest so it reports/lists them individually.
     include(GoogleTest)
-    gtest_discover_tests(dashcam_tests)
+    # Generous timeout: test discovery runs the binary once, which is slow on
+    # Pi-class hardware and blows the 5s default when the build is loading the CPU.
+    gtest_discover_tests(dashcam_tests DISCOVERY_TIMEOUT 60)
 endif()
