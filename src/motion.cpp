@@ -1,12 +1,23 @@
 #include "motion.hpp"
 
-void MotionDetector::addFrame(cv::Mat frame) {
+void MotionDetector::addFrame(RawFrame frame) {
     if (frame.empty()) {
         return;
     }
     std::scoped_lock lock(frameMutex);
     previousFrame = currentFrame.clone(); // Current frame becomes previous frame
-    cv::cvtColor(frame, currentFrame, cv::COLOR_BGR2GRAY); // New frame becomes current frame, converted to grayscale
+    // New frame becomes current frame, reduced to grayscale / luma.
+    switch (frame.format) {
+        case PixelFormat::NV12:
+        case PixelFormat::I420:
+            // Y plane is the first H rows of the packed YUV mat; a header-only
+            // view, no copy.
+            currentFrame = frame.data.rowRange(0, frame.size().height);
+            break;
+        case PixelFormat::BGR:
+            cv::cvtColor(frame.data, currentFrame, cv::COLOR_BGR2GRAY);
+            break;
+    }
     lastResult = computeMotion();
 }
 

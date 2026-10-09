@@ -5,7 +5,9 @@
 // Flow per the guide: CameraManager::start -> acquire camera ->
 // generateConfiguration(VideoRecording) -> validate -> configure ->
 // FrameBufferAllocator -> one Request per buffer -> start + queueRequest ->
-// requestCompleted signal -> map planes, convert to BGR, requeue.
+// requestCompleted signal -> map planes, emit native NV12/I420 RawFrame,
+// requeue. No BGR conversion: motion detection uses the Y plane and the
+// hardware encoder consumes NV12 directly.
 
 #include "camera.hpp"
 
@@ -49,7 +51,7 @@ class PiCamera::Impl {
 
         void requestComplete(LRequest* request);
 
-        SafeQueue<cv::Mat> frames{kQueueCapacity};
+        SafeQueue<RawFrame> frames{kQueueCapacity};
         std::atomic<bool> running{false};
 
     private:
@@ -68,6 +70,7 @@ class PiCamera::Impl {
 
         LPixelFormat pixelFormat;
         std::optional<libcamera::ColorSpace> streamColorSpace;
+        ColorSpace frameColorSpace = ColorSpace::Unspecified;
         unsigned int width = 0;
         unsigned int height = 0;
         unsigned int stride = 0;
@@ -84,7 +87,7 @@ class PiCamera::Impl {
         unsigned int dumpLimit = 0xFFFFFFFF;
         bool dumpChecked = false;
         unsigned int dumpIndex = 0;
-        cv::Mat convert(LFrameBuffer* buffer);
+        RawFrame convert(LFrameBuffer* buffer);
         // Templated on the plane container: std::vector<Plane> on libcamera
         // 0.2 (Bookworm's older releases), Span<const Plane> on 0.3+.
         template <typename Planes>
@@ -103,17 +106,17 @@ PiCamera::PiCamera() : impl(std::make_unique<Impl>()) {
 
 PiCamera::~PiCamera() = default;
 
-cv::Mat PiCamera::captureImage() {
+RawFrame PiCamera::captureImage() {
     return impl->frames.pop();
 }
 
 void PiCamera::Impl::requestComplete(LRequest* request) {
-    // Runs on the libcamera event thread: convert, hand off, requeue; never block.
+    // Runs on the libcamera event thread: assemble, hand off, requeue; never block.
     if (request->status() != LRequest::RequestCancelled) {
         for (const auto& bufferPair : request->buffers()) {
-            cv::Mat frame = convert(bufferPair.second);
+            RawFrame frame = convert(bufferPair.second);
             if (!frame.empty()) {
-                frames.push(frame); // Drops when full; the camera never blocks.
+                frames.push(std::move(frame)); // Drops when full; the camera never blocks.
             }
         }
     }
@@ -214,6 +217,13 @@ void PiCamera::Impl::configureStream() {
     height = streamConfig.size.height;
     stride = streamConfig.stride;
     streamColorSpace = streamConfig.colorSpace;
+    if (streamColorSpace) {
+        if (*streamColorSpace == libcamera::ColorSpace::Rec709) {
+            frameColorSpace = ColorSpace::Rec709;
+        } else if (*streamColorSpace == libcamera::ColorSpace::Smpte170m) {
+            frameColorSpace = ColorSpace::Smpte170m;
+        }
+    }
     std::cout << "PiCamera: negotiated " << width << "x" << height
               << " format=" << pixelFormat.toString()
               << " stride=" << stride
@@ -274,13 +284,13 @@ void PiCamera::Impl::unmapPlane(void* address, const LFrameBuffer::Plane& plane)
     }
 }
 
-cv::Mat PiCamera::Impl::convert(LFrameBuffer* buffer) {
+RawFrame PiCamera::Impl::convert(LFrameBuffer* buffer) {
     const LFrameMetadata& metadata = buffer->metadata();
     // Return type differs by libcamera version (vector vs Span); let the
     // compiler deduce it and instantiate the templated helpers to match.
     auto&& planes = buffer->planes();
     if (metadata.status != LFrameMetadata::FrameSuccess || planes.empty()) {
-        return cv::Mat();
+        return RawFrame();
     }
     if (!loggedPlanes) {
         loggedPlanes = true;
@@ -291,13 +301,23 @@ cv::Mat PiCamera::Impl::convert(LFrameBuffer* buffer) {
         std::cout << " colorSpace="
                   << (streamColorSpace ? streamColorSpace->toString() : std::string("none")) << std::endl;
     }
+    RawFrame frame;
     if (pixelFormat == libcamera::formats::MJPEG) {
-        return convertJpeg(planes, metadata);
+        frame.data = convertJpeg(planes, metadata);
+        frame.format = PixelFormat::BGR;
+    } else if (pixelFormat == libcamera::formats::NV12) {
+        frame.data = convertNv12(planes);
+        frame.format = PixelFormat::NV12;
+    } else {
+        frame.data = convertI420(planes);
+        frame.format = PixelFormat::I420;
     }
-    if (pixelFormat == libcamera::formats::NV12) {
-        return convertNv12(planes);
+    if (frame.data.empty()) {
+        return RawFrame();
     }
-    return convertI420(planes);
+    frame.colorSpace = frameColorSpace;
+    frame.timestamp = std::chrono::system_clock::now();
+    return frame;
 }
 
 template <typename Planes>
@@ -326,7 +346,7 @@ cv::Mat PiCamera::Impl::convertNv12(const Planes& planes) {
             std::memcpy(yuv.row(height + row).ptr(), uv + (std::size_t)row * uvStride, width);
         }
         dumpFrame(yuv, "nv12");
-        cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_NV12);
+        result = std::move(yuv);
     }
     unmapPlane(yMap, planes[0]);
     unmapPlane(uvMap, planes[1]);
@@ -364,7 +384,7 @@ cv::Mat PiCamera::Impl::convertI420(const Planes& planes) {
             std::memcpy(vDst + (std::size_t)row * chromaWidth, v + (std::size_t)row * cStride, chromaWidth);
         }
         dumpFrame(yuv, "i420");
-        cv::cvtColor(yuv, result, cv::COLOR_YUV2BGR_I420);
+        result = std::move(yuv);
     }
     unmapPlane(yMap, planes[0]);
     unmapPlane(uMap, planes[1]);

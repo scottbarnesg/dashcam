@@ -8,7 +8,31 @@
 #include <sstream>
 #include <vector>
 
+#include <opencv2/imgproc.hpp>
+
 #include "naming.hpp"
+
+namespace {
+
+std::int64_t epochUs(std::chrono::system_clock::time_point t) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
+}
+
+// YUV (packed, per frame.hpp) -> BGR for the software encoder path.
+void toBgr(const RawFrame& frame, cv::Mat& out) {
+    switch (frame.format) {
+        case PixelFormat::NV12:
+            cv::cvtColor(frame.data, out, cv::COLOR_YUV2BGR_NV12);
+            break;
+        case PixelFormat::I420:
+            cv::cvtColor(frame.data, out, cv::COLOR_YUV2BGR_I420);
+            break;
+        case PixelFormat::BGR:
+            break;
+    }
+}
+
+} // namespace
 
 VideoWriter::VideoWriter(std::filesystem::path fileDir, SegmentOptions opts)
     : outputDir(std::move(fileDir)), options(std::move(opts)) {
@@ -30,7 +54,7 @@ VideoWriter::~VideoWriter() {
     }
 }
 
-void VideoWriter::addFrame(cv::Mat frame) {
+void VideoWriter::addFrame(RawFrame frame) {
     if (frame.empty()) {
         return;
     }
@@ -87,7 +111,7 @@ bool VideoWriter::hasFreeSpace() {
     return space.available >= options.minFreeBytes;
 }
 
-void VideoWriter::openSegment(std::chrono::system_clock::time_point frameTime, cv::Size frameSize) {
+void VideoWriter::openSegment(std::chrono::system_clock::time_point frameTime, const RawFrame& firstFrame) {
     if (!hasFreeSpace()) {
         std::cerr << "VideoWriter: out of disk space, segment not started" << std::endl;
         return;
@@ -101,66 +125,162 @@ void VideoWriter::openSegment(std::chrono::system_clock::time_point frameTime, c
     // frame arrival is wrong for the first segment, whose warm-up window straddles
     // the slow idle->recording transition and yields a spurious ~1 fps.
     int fps = options.recordingFps > 0 ? options.recordingFps : calculateFPS();
-    std::cout << "VideoWriter: opening segment " << name << " at " << fps << " fps" << std::endl;
-    int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-    segmentWriter = cv::VideoWriter(segmentPath, fourcc, fps, frameSize);
+    cv::Size size = firstFrame.size();
+
+    // Hardware path: V4L2 M2M H.264 codec -> fragmented MP4. One encoder per
+    // segment guarantees the segment opens with an IDR.
+    bool wantHw = options.encoder == "hw" || (options.encoder == "auto" && !hwUnavailable);
+    usingHw = false;
+    if (wantHw) {
+        try {
+            H264Encoder::Params params;
+            params.width = size.width;
+            params.height = size.height;
+            params.fps = fps;
+            params.bitrateBps = options.bitrateKbps * 1000;
+            params.gopFrames = std::max(1, fps * options.gopSeconds);
+            params.inputFormat = firstFrame.format == PixelFormat::BGR ? PixelFormat::I420 : firstFrame.format;
+            params.colorSpace = firstFrame.colorSpace;
+            muxer = std::make_unique<Mp4Muxer>(segmentPath, size.width, size.height, fps);
+            muxer->open();
+            encoder = std::make_unique<H264Encoder>(params);
+            Mp4Muxer* m = muxer.get();
+            encoder->setOutputCallback([m](const uint8_t* data, std::size_t size_, bool keyframe, std::int64_t) {
+                m->write(data, size_, keyframe);
+            });
+            usingHw = true;
+        } catch (const std::exception& e) {
+            std::cerr << "VideoWriter: hardware encoder unavailable (" << e.what()
+                      << "), falling back to software" << std::endl;
+            if (options.encoder == "auto") {
+                hwUnavailable = true;
+            }
+            encoder.reset();
+            muxer.reset();
+            usingHw = false;
+        }
+    }
+
+    if (usingHw) {
+        std::cout << "VideoWriter: opening segment " << name << " at " << fps
+                  << " fps (hardware H.264)" << std::endl;
+    } else {
+        std::cout << "VideoWriter: opening segment " << name << " at " << fps << " fps" << std::endl;
+        int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+        segmentWriter = cv::VideoWriter(segmentPath, fourcc, fps, size);
+        if (!segmentWriter.isOpened()) {
+            std::cerr << "VideoWriter: could not open output file " << segmentPath << std::endl;
+        }
+    }
     segmentStart = frameTime;
     segmentFrames = 0;
-    if (!segmentWriter.isOpened()) {
-        std::cerr << "VideoWriter: could not open output file " << segmentPath << std::endl;
-    }
 }
 
 void VideoWriter::closeSegment() {
-    if (!segmentWriter.isOpened()) {
-        std::filesystem::remove(sentinelPath);
+    if (usingHw) {
+        // Drain first, then join the encoder's callback thread (via its
+        // destructor), and only then touch the muxer: after the join no
+        // callback can be in flight, so close() has sole ownership.
+        encoder->drain(std::chrono::seconds(2));
+        if (encoder->failed()) {
+            std::cerr << "VideoWriter: encoder error: " << encoder->lastError() << std::endl;
+        }
+        encoder.reset();
+        muxer->close();
+        if (!muxer->ok()) {
+            std::cerr << "VideoWriter: muxer error: " << muxer->lastError() << std::endl;
+        }
+        muxer.reset();
+        usingHw = false;
+    } else if (segmentWriter.isOpened()) {
+        segmentWriter.release();
+    } else {
+        std::filesystem::remove(sentinelPath); // Segment never opened (disk full / bad codec).
         return;
     }
-    segmentWriter.release();
     std::filesystem::remove(sentinelPath);
     _segmentsWritten++;
     if (options.manifest) {
-        double duration = segmentFrames > 1
-            ? std::chrono::duration<double>(getCurrentTime() - segmentStart).count()
-            : 0.0;
-        options.manifest->addRecording(segmentPath, options.context, naming::timestamp(segmentStart), duration);
-        if (!options.manifest->save()) {
-            std::cerr << "VideoWriter: failed to persist manifest" << std::endl;
+        std::error_code ec;
+        auto bytes = std::filesystem::file_size(segmentPath, ec);
+        if (ec || bytes == 0) {
+            std::cerr << "VideoWriter: segment " << segmentPath << " is empty; not registered" << std::endl;
+        } else {
+            double duration = segmentFrames > 1
+                ? std::chrono::duration<double>(getCurrentTime() - segmentStart).count()
+                : 0.0;
+            options.manifest->addRecording(segmentPath, options.context, naming::timestamp(segmentStart), duration);
+            if (!options.manifest->save()) {
+                std::cerr << "VideoWriter: failed to persist manifest" << std::endl;
+            }
         }
     }
 }
 
+void VideoWriter::submitFrame(RawFrame& frame) {
+    if (usingHw) {
+        cv::Mat yuv;
+        const cv::Mat* data = &frame.data;
+        if (frame.format == PixelFormat::BGR) {
+            // The hardware path was configured for I420 when the segment
+            // started on BGR frames (COLOR_BGR2YUV_I420 is available on
+            // older OpenCV; the NV12 conversion is not).
+            cv::cvtColor(frame.data, yuv, cv::COLOR_BGR2YUV_I420);
+            data = &yuv;
+        }
+        auto stamp = frame.timestamp == std::chrono::system_clock::time_point{} ? getCurrentTime()
+                                                                                 : frame.timestamp;
+        if (encoder->encode(*data, epochUs(stamp))) {
+            segmentFrames++;
+        } else {
+            droppedFrameCount++;
+        }
+        return;
+    }
+    if (!segmentWriter.isOpened()) {
+        return;
+    }
+    cv::Mat bgr;
+    toBgr(frame, bgr);
+    segmentWriter.write(bgr.empty() ? frame.data : bgr);
+    segmentFrames++;
+}
+
 void VideoWriter::writeToFile() {
     // Warm up: hold a few frames so the FPS estimate is meaningful before opening the file.
-    std::vector<cv::Mat> warmup;
+    std::vector<RawFrame> warmup;
     while (warmup.size() < 10) {
-        cv::Mat frame = frameBuffer.pop();
+        RawFrame frame = frameBuffer.pop();
         if (frame.empty()) {
             return; // Buffer closed before any video was produced.
         }
         warmup.push_back(std::move(frame));
     }
-    openSegment(getCurrentTime(), warmup.front().size());
-    for (cv::Mat& frame : warmup) {
-        if (segmentWriter.isOpened()) {
-            segmentWriter.write(frame);
-            segmentFrames++;
-        }
+    openSegment(getCurrentTime(), warmup.front());
+    for (RawFrame& frame : warmup) {
+        submitFrame(frame);
     }
     while (true) {
-        cv::Mat frame = frameBuffer.pop();
+        RawFrame frame = frameBuffer.pop();
         if (frame.empty()) {
             break; // Buffer closed and drained.
         }
+        bool segmentActive = usingHw || segmentWriter.isOpened();
         auto frameTime = getCurrentTime();
-        if (segmentWriter.isOpened() &&
-            std::chrono::duration_cast<std::chrono::seconds>(frameTime - segmentStart).count() >= options.lengthSeconds) {
+        if (segmentActive && frameTime - segmentStart >= std::chrono::seconds(options.lengthSeconds)) {
             closeSegment(); // Self-closing segment: durable across power loss.
-            openSegment(frameTime, frame.size());
+            openSegment(frameTime, frame);
         }
-        if (segmentWriter.isOpened()) {
-            segmentWriter.write(frame);
-            segmentFrames++;
+        if (usingHw && encoder->failed()) {
+            // Encode-side failure (e.g. codec node died): roll the segment so
+            // the error surfaces and a fresh encoder (or the software path)
+            // takes over.
+            std::cerr << "VideoWriter: rolling segment after encoder failure" << std::endl;
+            closeSegment();
+            openSegment(getCurrentTime(), frame);
+        }
+        if (usingHw || segmentWriter.isOpened()) {
+            submitFrame(frame);
         }
     }
     closeSegment();

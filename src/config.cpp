@@ -91,6 +91,19 @@ bool applyKeyValue(Config& config, const std::string& key, const std::string& va
         if (!checkInt(config.segmentLengthSeconds, 1)) {
             return false;
         }
+    } else if (key == "encoder") {
+        if (value != "auto" && value != "hw" && value != "sw") {
+            return false;
+        }
+        config.encoder = value;
+    } else if (key == "video_bitrate_kbps") {
+        if (!checkInt(config.videoBitrateKbps, 16)) {
+            return false;
+        }
+    } else if (key == "video_gop_seconds") {
+        if (!checkInt(config.videoGopSeconds, 1)) {
+            return false;
+        }
     } else {
         std::cerr << "Config: unknown key '" << key << "'" << std::endl;
         return false;

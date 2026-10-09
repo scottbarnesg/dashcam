@@ -30,3 +30,13 @@ motion_threshold = 10000
 # power cut loses at most one segment. Closed segments are registered in the
 # manifest; an interrupted segment is quarantined on next boot.
 segment_length_seconds = 120
+
+# Video encoder: "hw" uses the Pi's hardware H.264 codec (/dev/video11) and
+# writes fragmented MP4 (fragments stay playable after a power cut); "sw"
+# uses the portable OpenCV software path; "auto" tries hardware first and
+# falls back to software.
+encoder = auto
+
+# Hardware encoder target bitrate (kbps) and IDR/fragment interval (seconds).
+video_bitrate_kbps = 5000
+video_gop_seconds = 2

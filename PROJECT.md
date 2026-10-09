@@ -29,7 +29,10 @@ The system operates in an **intermittently connected environment**:
   configurable timeout (default 120s). Mid-drive fragmentation at stops is accepted.
 - Capture runs behind a `Camera` interface with a single production backend:
   libcamera (Pi Camera Module and any libcamera-supported camera, including
-  UVC webcams); tests use a simulated camera.
+  UVC webcams); tests use a simulated camera. Frames flow as native YUV
+  (NV12) — motion detection uses the luma plane, no BGR conversion in the hot path.
+- Recording uses the Pi's hardware H.264 codec (V4L2 M2M) into fragmented
+  MP4 (`encoder = auto|hw|sw`, software fallback automatic).
 - Recording is **power-loss-safe**: fixed-length self-closing segments with a
   write sentinel, boot-time quarantine of incomplete files, and free-space checks.
 - A **manifest** (`manifest.jsonl`, atomic writes, SHA-256 per file, rebuildable)

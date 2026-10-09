@@ -14,7 +14,7 @@
 class SimulatedCamera : public Camera {
     public:
         explicit SimulatedCamera(int width = 640, int height = 480) : frameWidth(width), frameHeight(height) {}
-        cv::Mat captureImage() override {
+        RawFrame captureImage() override {
             cv::Mat frame(frameHeight, frameWidth, CV_8UC3, cv::Scalar(30, 60, 90));
             if (_moving) {
                 int x = (frameNumber * 37) % (frameWidth - 100);
@@ -25,7 +25,7 @@ class SimulatedCamera : public Camera {
             }
             frameNumber++;
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            return frame;
+            return RawFrame{frame, PixelFormat::BGR, ColorSpace::Unspecified, std::chrono::system_clock::now()};
         }
         std::string name() const override { return "sim"; }
         void setMoving(bool moving) { _moving = moving; }

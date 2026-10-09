@@ -14,6 +14,9 @@ struct Config {
     double recordingFps = 30.0;
     int motionThreshold = 10000;           // min contour area (px) to count as motion
     int segmentLengthSeconds = 120;        // power-loss-safe segment size (item 3)
+    std::string encoder = "auto";          // auto | hw | sw (hw = Pi V4L2 H.264 codec)
+    int videoBitrateKbps = 5000;           // hardware encoder target bitrate
+    int videoGopSeconds = 2;               // hardware encoder IDR/fragment interval
 
     // Parses path; missing file -> defaults. Invalid entries are reported to
     // stderr but never fatal.

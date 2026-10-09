@@ -53,6 +53,9 @@ int main(int argc, char* argv[]) {
                     seg.recordingFps = static_cast<int>(config.recordingFps);
                     seg.context = "seg";
                     seg.manifest = &manifest;
+                    seg.encoder = config.encoder;
+                    seg.bitrateKbps = config.videoBitrateKbps;
+                    seg.gopSeconds = config.videoGopSeconds;
                     writer = std::make_unique<VideoWriter>(config.videoDir, seg);
                 }
                 writer->addFrame(frame);

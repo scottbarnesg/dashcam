@@ -42,3 +42,16 @@ TEST_F(ConfigTest, ValidAndInvalidEntries) {
     EXPECT_EQ(c.motionThreshold, 500);
     EXPECT_EQ(c.segmentLengthSeconds, 120);            // untouched default
 }
+
+TEST_F(ConfigTest, EncoderSettings) {
+    write("encoder = hw\n"
+          "video_bitrate_kbps = 8000\n"
+          "video_gop_seconds = 3\n"
+          "encoder = bogus\n"                     // invalid: last good value kept
+          "video_bitrate_kbps = 5\n"              // below minimum: kept out
+          "video_gop_seconds = zero\n");
+    Config c = Config::load(p);
+    EXPECT_EQ(c.encoder, "hw");
+    EXPECT_EQ(c.videoBitrateKbps, 8000);
+    EXPECT_EQ(c.videoGopSeconds, 3);
+}

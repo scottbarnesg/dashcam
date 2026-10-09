@@ -102,4 +102,10 @@ enhancement.
 - Secondary/fallback driving triggers — GPS speed, MPU-6050 IMU (in hand; needs no-solder wiring via Grove SHAT or jumpers for dev), or ACC-switched power.
 - Watchdog/heartbeat and graceful shutdown for vehicle power loss.
 - SD wear reduction (read-only rootfs, batched writes).
-- Hardware H.264 encoding path for low-power Pi targets (libcamera encode-stream role, avoiding CPU decode/re-encode).
+- ~~Hardware H.264 encoding path for low-power Pi targets~~ — DONE: V4L2 M2M
+  H.264 encoder (`/dev/video11`, rpicam-apps-style) + libavformat
+  fragmented-MP4 muxer, fed NV12 straight from the capture path (no BGR
+  conversion; motion detection uses the Y plane). `encoder = auto|hw|sw`
+  config selects the path; software `cv::VideoWriter` remains the fallback.
+  Also delivers §3's fMP4 preference: open segments now stay playable after
+  a power cut up to the last flushed fragment.
