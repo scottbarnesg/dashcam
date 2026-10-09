@@ -200,6 +200,14 @@ void VideoWriter::closeSegment() {
     }
     std::filesystem::remove(sentinelPath);
     _segmentsWritten++;
+    // Per-segment telemetry (BACKLOG item 2 asked for fps logging): the encode
+    // rate vs the configured rate and the running drop count tell capture-side
+    // slowness apart from encoder-side drops.
+    double elapsed = std::chrono::duration<double>(getCurrentTime() - segmentStart).count();
+    double encodeFps = elapsed > 0 ? segmentFrames / elapsed : 0.0;
+    std::cout << "VideoWriter: closed " << segmentPath.filename().string() << ": " << segmentFrames
+              << " frames, " << std::fixed << std::setprecision(1) << encodeFps
+              << " fps, dropped so far: " << droppedFrameCount.load() << std::endl;
     if (options.manifest) {
         std::error_code ec;
         auto bytes = std::filesystem::file_size(segmentPath, ec);
