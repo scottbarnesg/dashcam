@@ -127,11 +127,9 @@ void Pipeline::motionLoop() {
             }
             std::cout << "Motion detected! Recording video..." << std::endl;
         }
-        if (isRecording) {
-            RecordEvent frameEvent;
-            frameEvent.frame = frame;
-            recordQueue.push(std::move(frameEvent)); // Counted on overflow.
-        } else if (wasRecording) {
+        // NOTE: frames are forwarded to the recorder by the ingest stage
+        // (gated on recordingActive); this stage emits lifecycle events only.
+        if (!isRecording && wasRecording) {
             wasRecording = false;
             RecordEvent stopEvent;
             stopEvent.stop = true;
