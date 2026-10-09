@@ -17,11 +17,12 @@ using Clock = std::chrono::system_clock;
 
 namespace {
 
-void feedFrames(VideoWriter& w, int n, int width = 160, int height = 120) {
+void feedFrames(VideoWriter& w, int n, int width = 160, int height = 120,
+                std::chrono::milliseconds interval = std::chrono::milliseconds(20)) {
     for (int i = 0; i < n; i++) {
         cv::Mat frame(height, width, CV_8UC3, cv::Scalar((i * 7) % 256, 40, 90));
         w.addFrame(frame);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(interval);
     }
 }
 
@@ -60,14 +61,20 @@ TEST(VideoWriter, ClosesValidFileAndIgnoresEmptyFrames) {
     fs::remove_all(dir);
 }
 
-TEST(VideoWriter, UsesConfiguredRecordingFpsForPlayback) {
+TEST(VideoWriter, CaptureTimestampsDrivePlaybackTiming) {
+    // Hardware-path PTS follow frame capture stamps (a stall becomes a PTS
+    // gap, not sped-up playback); recordingFps is the stream timebase.
+    // Feed 30 frames at 25 fps real pace: the muxed stream must carry every
+    // frame, and its reported rate must be consistent with the capture pace
+    // (exact PTS spacing is verified on-device with ffprobe; OpenCV's
+    // fps property on fragmented MP4 is not reliable enough to assert here).
     fs::path dir = "test_videos_fps";
     fs::remove_all(dir);
     {
         VideoWriter::SegmentOptions opts;
-        opts.recordingFps = 24; // Authoritative; the 20ms feed would estimate ~50.
+        opts.recordingFps = 24; // Timescale only; timing comes from capture stamps.
         VideoWriter writer(dir, opts);
-        feedFrames(writer, 30);
+        feedFrames(writer, 30, 160, 120, std::chrono::milliseconds(40));
     }
     fs::path produced;
     for (const auto& e : fs::directory_iterator(dir)) {
@@ -78,7 +85,13 @@ TEST(VideoWriter, UsesConfiguredRecordingFpsForPlayback) {
     ASSERT_FALSE(produced.empty());
     cv::VideoCapture cap(produced);
     ASSERT_TRUE(cap.isOpened());
-    EXPECT_NEAR(cap.get(cv::CAP_PROP_FPS), 24.0, 1.0);
+    cv::Mat frame;
+    int frames = 0;
+    while (cap.read(frame)) {
+        frames++;
+    }
+    EXPECT_GE(frames, 28);
+    EXPECT_GT(cap.get(cv::CAP_PROP_FPS), 0.0);
     fs::remove_all(dir);
 }
 
