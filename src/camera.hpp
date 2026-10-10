@@ -3,6 +3,7 @@
 #include <string>
 
 #include "frame.hpp"
+#include "orientation.hpp"
 
 #ifndef CAMERA_H
 #define CAMERA_H
@@ -27,18 +28,22 @@ class Camera {
         virtual std::string name() const = 0;
 };
 
-// Factory: "pi" (libcamera).
-std::unique_ptr<Camera> createCamera(const std::string& backend);
+// Factory: "pi" (libcamera). orientation is the frame correction applied by
+// backends that support it (PiCamera: item 7); Auto defers to the sensor.
+std::unique_ptr<Camera> createCamera(const std::string& backend,
+                                     CameraOrientation orientation = CameraOrientation::Auto);
 
 // Captures from the Pi Camera Module using libcamera directly, following the
 // libcamera Application Writer's Guide (docs.libcamera.org). Uses the
 // VideoRecording stream role, maps completed frame buffers, and emits
 // native-format RawFrames (NV12/I420; MJPEG is decoded to BGR). Requires the
 // libcamera-dev package. libcamera types are hidden behind a pimpl, defined
-// in picamera.cpp.
+// in picamera.cpp. Frames are rotated/flipped to the resolved orientation
+// (item 7): an explicit request wins, otherwise the sensor's reported
+// rotation is used, otherwise frames pass through unchanged.
 class PiCamera : public Camera {
     public:
-        PiCamera();
+        explicit PiCamera(CameraOrientation orientation = CameraOrientation::Auto);
         ~PiCamera() override;
         RawFrame captureImage() override;
         // Idempotent: stops streaming and closes the frame queue so a

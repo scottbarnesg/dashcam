@@ -43,6 +43,15 @@ TEST_F(ConfigTest, ValidAndInvalidEntries) {
     EXPECT_EQ(c.segmentLengthSeconds, 120);            // untouched default
 }
 
+TEST_F(ConfigTest, CameraOrientation) {
+    write("camera_orientation = 90\n"
+          "camera_orientation = mirror-270\n"
+          "camera_orientation = 45\n"); // invalid: last good value kept
+    Config c = Config::load(p);
+    EXPECT_EQ(c.cameraOrientation, CameraOrientation::Mirror270);
+    EXPECT_EQ(Config::load("does_not_exist.conf").cameraOrientation, CameraOrientation::Auto);
+}
+
 TEST_F(ConfigTest, EncoderSettings) {
     write("encoder = hw\n"
           "video_bitrate_kbps = 8000\n"

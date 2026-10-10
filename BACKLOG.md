@@ -73,7 +73,7 @@ Connectivity is intermittent: files accumulate while driving (offline), offload 
 - ~~`VideoWriter` destructor hang~~ — DONE (`SafeQueue::close()` wakes blocked consumers).
 - Fix `configure-service.sh` (appends a literal sed command into the unit file instead of executing it) and `make install` invoking `make build` non-recursively.
 
-## 7. Camera orientation / rotation
+## 7. Camera orientation / rotation — DONE (pending verification on real Pi hardware)
 
 On the Pi the recordings play back rotated 90 degrees: the imx219 sensor's
 native orientation differs from the physical mounting, and the capture path
@@ -81,18 +81,28 @@ ignores orientation entirely. Colors are now correct; only the rotation is
 wrong. Every recorded clip is affected, so this is a correctness fix, not an
 enhancement.
 
-- Read the camera's orientation from libcamera (`properties::Orientation`, a
-  `ControlEnum` with `Rotate_0/90/180/270` and transpose variants — the same
-  property `rpicam-apps` honors) at configure time.
-- Apply the matching rotation in the `PiCamera` converter after BGR conversion
-  (`cv::rotate`), so both motion detection and the writer consume correctly
-  oriented frames. Applies to all capture formats (NV12/I420/MJPEG), so do it
-  post-conversion, once.
-- Add a config override (`camera_orientation = auto | 0 | 90 | 180 | 270 |
-  mirror-*`) for physical mounting that differs from the sensor's reported
-  orientation, or sensors that don't report it (some clones).
-- Unit-test the orientation->`cv::RotateCode` mapping (a pure function, easy to
-  test); rotation correctness itself is verified on-device.
+- ~~Read the camera's orientation from libcamera at configure time.~~ DONE:
+  implemented against `properties::Rotation` (counter-clockwise degrees) —
+  the camera property that exists across libcamera versions (checked through
+  current upstream; there is no `Orientation` *property*, only the internal
+  `libcamera::Orientation` enum). Falls back to no correction when the
+  sensor reports nothing (e.g. older Pi DTs, some clones).
+- ~~Apply the matching rotation in the `PiCamera` converter~~ DONE:
+  `applyOrientation()` runs once per frame post-conversion on the native
+  packed formats (Y plane + chroma plane(s) for NV12/I420; whole image for
+  MJPEG/BGR), so motion detection and the writer both consume upright
+  frames. (The original "after BGR conversion" wording predates the
+  no-BGR hot path from the hw-encode item; transforming YUV directly avoids
+  reintroducing a conversion.)
+- ~~Add a config override (`camera_orientation = auto | 0 | 90 | 180 | 270 |
+  mirror-*`)~~ DONE: explicit values override the sensor; mirror-* =
+  horizontal flip then clockwise rotation.
+- ~~Unit-test the orientation->`cv::RotateCode` mapping~~ DONE
+  (`orientation_test.cpp`): parse, orientation->flip+rotate-code mapping,
+  CCW-property conversion, and per-format pixel-level transform checks.
+  Rotation correctness itself (and the Rotation-property direction) is
+  verified on-device; if a sensor's reported rotation turns out inverted
+  from our convention, the config override corrects it without recompile.
 - Related but separate: the stream negotiates Rec.709 while we convert with
   OpenCV's BT.601 coefficients — a mild color shift, not rotation. Track as its
   own item; a hardware-encode path (Later) would sidestep both conversions.

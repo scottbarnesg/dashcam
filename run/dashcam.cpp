@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Recovery: registered " << recovered << " unregistered recording(s) in the manifest" << std::endl;
     }
 
-    auto camera = createCamera(config.cameraBackend);
+    auto camera = createCamera(config.cameraBackend, config.cameraOrientation);
     std::string backend = camera->name();
 
     Pipeline::Options options;

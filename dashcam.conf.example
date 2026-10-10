@@ -8,6 +8,14 @@
 # camera libcamera supports, including UVC webcams).
 camera_backend = pi
 
+# Frame orientation correction: "auto" applies the rotation reported by the
+# sensor; or force one of "0", "90", "180", "270" (clockwise rotation) and
+# their mirrored forms "mirror-0", "mirror-90", "mirror-180", "mirror-270"
+# (horizontal flip, then clockwise rotation). Use an explicit value when the
+# physical mounting differs from what the sensor reports (or the sensor
+# reports nothing, e.g. some clone modules).
+camera_orientation = auto
+
 # Where recordings and manifest.jsonl are written (relative to the working
 # directory, or absolute).
 video_dir = videos

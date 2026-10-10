@@ -1,6 +1,8 @@
 #include <filesystem>
 #include <string>
 
+#include "orientation.hpp"
+
 #ifndef CONFIG_H
 #define CONFIG_H
 
@@ -8,6 +10,9 @@
 // unknown keys and invalid values are logged and the built-in default is kept.
 struct Config {
     std::string cameraBackend = "pi";      // pi (libcamera)
+    // Frame orientation correction (item 7): "auto" takes what the sensor
+    // reports; an explicit value overrides physical mounting differences.
+    CameraOrientation cameraOrientation = CameraOrientation::Auto;
     std::filesystem::path videoDir = "videos";
     int noMotionTimeoutSeconds = 120;      // N for the driving state machine
     double idleFps = 5.0;

@@ -44,6 +44,10 @@ The system operates in an **intermittently connected environment**:
   and offload.
 - Configuration via `dashcam.conf` (thresholds, timeout N, fps, segment length,
   paths); runtime tuning needs no recompile.
+- Frames are orientation-corrected in the capture backend (backlog 7): the
+  sensor's reported rotation is applied (or a `camera_orientation` config
+  override), so motion detection and the encoder see upright pixels.
+  Pending on-device verification.
 - Old-file cleanup (backlog 5b) and server offload (5c) — not yet implemented;
   OpenSSL and the manifest are ready for them.
 - Secondary driving triggers (GPS, MPU-6050 IMU, ACC-switched power) — backlog.

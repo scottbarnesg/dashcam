@@ -11,6 +11,8 @@
 
 #include "camera.hpp"
 
+#include "orientation.hpp"
+
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -46,7 +48,7 @@ using LStreamConfiguration = libcamera::StreamConfiguration;
 
 class PiCamera::Impl {
     public:
-        explicit Impl();
+        explicit Impl(CameraOrientation requestedOrientation);
         ~Impl();
 
         // Idempotent shutdown (see definition): safe from any thread, runs at
@@ -80,12 +82,23 @@ class PiCamera::Impl {
         LPixelFormat pixelFormat;
         std::optional<libcamera::ColorSpace> streamColorSpace;
         ColorSpace frameColorSpace = ColorSpace::Unspecified;
+        // Item 7: per-request correction (Auto = follow the sensor) and the
+        // resolved transform applied to every emitted frame in convert().
+        CameraOrientation requestedOrientation = CameraOrientation::Auto;
+        CameraOrientation orientation = CameraOrientation::Rotate0;
         unsigned int width = 0;
         unsigned int height = 0;
         unsigned int stride = 0;
         bool loggedPlanes = false;
+        bool orientationWarned = false;
 
         void chooseCamera();
+        // Item 7: resolve the frame correction. An explicit config value
+        // wins; "auto" follows the sensor's reported Rotation property
+        // (libcamera's cross-version camera property: counter-clockwise
+        // degrees; current libcamera has no Orientation *property*, only
+        // this one), falling back to no correction when it reports nothing.
+        void resolveOrientation();
         void configureStream();
         void allocateRequests();
         // Debug aid: PICAMERA_DEBUG_DUMP=N writes the first N assembled raw
@@ -110,7 +123,8 @@ class PiCamera::Impl {
         static void unmapPlane(void* address, const LFrameBuffer::Plane& plane);
 };
 
-PiCamera::PiCamera() : impl(std::make_unique<Impl>()) {
+PiCamera::PiCamera(CameraOrientation requestedOrientation)
+    : impl(std::make_unique<Impl>(requestedOrientation)) {
 }
 
 PiCamera::~PiCamera() = default;
@@ -143,12 +157,14 @@ void PiCamera::Impl::requestComplete(LRequest* request) {
     }
 }
 
-PiCamera::Impl::Impl() {
+PiCamera::Impl::Impl(CameraOrientation requested) {
+    requestedOrientation = requested;
     if (manager.start() < 0) {
         throw std::runtime_error("libcamera: could not start CameraManager");
     }
     try {
         chooseCamera();
+        resolveOrientation();
         configureStream();
         allocateRequests();
     } catch (...) {
@@ -220,6 +236,23 @@ void PiCamera::Impl::chooseCamera() {
         found->release();
     }
     throw std::runtime_error("libcamera: no usable camera found (is it enabled in raspi-config?)");
+}
+
+void PiCamera::Impl::resolveOrientation() {
+    if (requestedOrientation != CameraOrientation::Auto) {
+        orientation = requestedOrientation;
+        std::cout << "PiCamera: using configured orientation override" << std::endl;
+        return;
+    }
+    auto rotation = camera->properties().get(libcamera::properties::Rotation);
+    if (rotation) {
+        orientation = orientationFromRotationProperty(*rotation);
+        std::cout << "PiCamera: sensor reports rotation " << *rotation << " deg (CCW)" << std::endl;
+    } else {
+        orientation = CameraOrientation::Rotate0;
+        std::cout << "PiCamera: sensor reports no orientation; frames pass through "
+                  << "unchanged (set camera_orientation if playback is rotated)" << std::endl;
+    }
 }
 
 void PiCamera::Impl::configureStream() {
@@ -340,6 +373,13 @@ RawFrame PiCamera::Impl::convert(LFrameBuffer* buffer) {
     }
     if (frame.data.empty()) {
         return RawFrame();
+    }
+    // Item 7: correct orientation once, post-conversion, so motion
+    // detection and the writer both see upright pixels.
+    if (!applyOrientation(frame, orientation) && !orientationWarned) {
+        orientationWarned = true;
+        std::cerr << "PiCamera: cannot apply orientation to " << width << "x" << height
+                  << " frame; emitting unrotated" << std::endl;
     }
     frame.colorSpace = frameColorSpace;
     frame.timestamp = std::chrono::system_clock::now();
