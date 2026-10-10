@@ -121,6 +121,43 @@ camera queue, and CFR muxing turned that into ~2x-speed playback.
 - Muxer now stamps capture-time PTS (a stall becomes a PTS gap, not sped-up
   playback).
 
+## 9. Improve the motion detection algorithm
+
+The current detector is naive consecutive-frame differencing: `absdiff` on the
+Y plane, fixed pixel threshold 25, then `findContours` and a single
+resolution-dependent contour-area threshold (`motion_threshold`). It works,
+but is fragile in exactly the conditions the dashcam lives in. Goal: fewer
+false triggers (lighting) and fewer misses (night/distance) without raising
+per-frame CPU cost.
+
+- Temporal debouncing/hysteresis: require motion in M of the last N frames
+  (or a short streak) before declaring motion, so single-frame events —
+  headlights, camera bumps, sensor noise bursts — don't start a recording or
+  reset the §2 no-motion timeout.
+- Reject global illumination changes: shadows, sun flicker, tunnel
+  entrances/exits change most pixels' luma at once. E.g. subtract the median
+  frame-to-frame luma shift before thresholding, or treat "almost the whole
+  frame changed" as lighting, not motion.
+- Replace the fixed pixel threshold with an adaptive one (running mean/k or
+  percentile of the diff image), so night noise and daylight sensitivity
+  self-tune instead of needing a recompile-per-value.
+- Consider a light background model (running average or `cv::MOG2`) instead
+  of raw prev/curr differencing to handle gradual change; keep it cheap —
+  downsample the luma (e.g. 1/4) before diffing, which also cuts the §8
+  motion-stage cost.
+- Cheapen the decision: count changed pixels (or `connectedComponents`)
+  instead of full `findContours` on the full-res diff; add the long-standing
+  erode/dilate cleanup (TODO in `computeMotion()`) so noise pixels don't
+  merge into a threshold-crossing blob.
+- Threshold normalization: express `motion_threshold` as a fraction of frame
+  area instead of raw pixels so it transfers across resolutions/cameras.
+- ROI masking (config): exclude permanently-static-but-noisy regions (hood
+  edge, dashboard reflection, sky band) from the diff.
+- Validation: build a small clip harness (recorded drives + parked-with-
+  shadows clips) and score candidate algorithms on trigger rate / misses
+  before swapping the implementation; keep `MotionDetector`'s interface so
+  the driving state machine is untouched.
+
 ## Later / ideas
 
 - Secondary/fallback driving triggers — GPS speed, MPU-6050 IMU (in hand; needs no-solder wiring via Grove SHAT or jumpers for dev), or ACC-switched power.
