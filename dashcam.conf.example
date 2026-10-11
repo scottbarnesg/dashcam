@@ -25,12 +25,23 @@ camera_orientation = auto
 # directory, or absolute).
 video_dir = videos
 
+# Operating mode: how the device is powered and what triggers recording.
+#   driving    - ignition-powered. Records continuously as soon as it boots;
+#                power presence is the driving signal and power loss ends the
+#                drive (power-loss-safe segments make this safe). Motion
+#                detection never gates recording.
+#   persistent - battery-powered. Records only while motion is detected
+#                (parked surveillance): the no_motion_timeout_seconds setting
+#                below applies. The safer default if misconfigured.
+mode = persistent
+
 # Driving trigger (motion-as-driving proxy): recording stops only after this
 # many consecutive seconds with no motion. Mid-drive fragmentation at stops
-# shorter than this is expected and accepted.
+# shorter than this is expected and accepted. Applies to persistent mode only.
 no_motion_timeout_seconds = 120
 
 # Frame capture rate while idle (watching for motion) and while recording.
+# idle_fps applies to persistent mode only; driving mode records from boot.
 idle_fps = 5.0
 recording_fps = 30.0
 

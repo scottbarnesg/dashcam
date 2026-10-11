@@ -63,6 +63,7 @@ int main(int argc, char* argv[]) {
 
     Pipeline::Options options;
     options.motionThreshold = config.motionThreshold;
+    options.driving.mode = config.mode;
     options.driving.noMotionTimeout = std::chrono::seconds(config.noMotionTimeoutSeconds);
     options.driving.idleFps = config.idleFps;
     options.driving.recordingFps = config.recordingFps;
@@ -82,7 +83,11 @@ int main(int argc, char* argv[]) {
     };
 
     Pipeline pipeline(std::move(camera), options);
-    std::cout << "Dashcam started with camera backend: " << backend << std::endl;
+    std::cout << "Dashcam started with camera backend: " << backend << " mode: "
+              << operatingModeName(config.mode) << (config.mode == OperatingMode::Driving
+                                                        ? " (record continuously while powered)"
+                                                        : " (record on motion while parked)")
+              << std::endl;
     pipeline.start();
     // run() blocks on a condition variable a signal handler can't safely
     // wake, so poll the flag; 100 ms of shutdown latency is far below the

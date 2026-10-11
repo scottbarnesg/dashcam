@@ -84,6 +84,28 @@ TEST(PipelineTest, RecordsWhileDrivingAndStopsWhenParked) {
     fs::remove_all(dir);
 }
 
+TEST(PipelineTest, DrivingModeRecordsWithoutMotion) {
+    // Item 10: in driving mode power presence is the trigger — a static
+    // scene must still record from the first frame and never stop.
+    fs::path dir = "test_e2e_driving";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    Manifest manifest(dir);
+    Pipeline::Options options = fastOptions(dir, &manifest);
+    options.driving.mode = OperatingMode::Driving;
+    auto camera = std::make_unique<SimulatedCamera>();
+    SimulatedCamera* cam = camera.get();
+    cam->setMoving(false);
+    Pipeline pipeline(std::move(camera), options);
+    pipeline.start();
+    ASSERT_TRUE(waitFor([&] { return pipeline.recording(); }, 3000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500)); // Longer than noMotionTimeout.
+    EXPECT_TRUE(pipeline.recording());
+    pipeline.stop();
+    EXPECT_GE(manifest.size(), 1u);
+    fs::remove_all(dir);
+}
+
 TEST(PipelineTest, StagedQueuesNeverBlockIntake) {
     // A deliberately slow pipeline: tiny record queue, motion at 200 fps.
     // Intake must keep flowing throughout (no deadlock); recorded frames are

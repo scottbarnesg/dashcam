@@ -2,6 +2,22 @@
 
 #include <algorithm>
 
+bool parseOperatingMode(const std::string& text, OperatingMode& out) {
+    if (text == "driving") {
+        out = OperatingMode::Driving;
+        return true;
+    }
+    if (text == "persistent") {
+        out = OperatingMode::Persistent;
+        return true;
+    }
+    return false;
+}
+
+const char* operatingModeName(OperatingMode mode) {
+    return mode == OperatingMode::Driving ? "driving" : "persistent";
+}
+
 DrivingController::DrivingController(Params params) : settings(params) {
 }
 
@@ -12,6 +28,12 @@ double DrivingController::fps() const {
 bool DrivingController::onFrame(std::chrono::system_clock::time_point now, bool motion) {
     if (motion) {
         lastMotionTime = now;
+    }
+    if (settings.mode == OperatingMode::Driving) {
+        // Power presence is the driving signal: recording is never gated on
+        // motion. Motion still updates lastMotionTime for future event tagging.
+        _state = State::Recording;
+    } else if (motion) {
         if (_state == State::Idle) {
             _state = State::Recording;
         }

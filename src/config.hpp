@@ -1,6 +1,7 @@
 #include <filesystem>
 #include <string>
 
+#include "driving.hpp"
 #include "orientation.hpp"
 
 #ifndef CONFIG_H
@@ -10,6 +11,10 @@
 // unknown keys and invalid values are logged and the built-in default is kept.
 struct Config {
     std::string cameraBackend = "pi";      // pi (libcamera)
+    // Operating mode (item 10): driving = record whenever powered;
+    // persistent = motion-gated recording. Persistent is the safer default
+    // if misconfigured (a battery unit that records nonstop dies).
+    OperatingMode mode = OperatingMode::Persistent;
     // Frame orientation correction (item 7): "auto" takes what the sensor
     // reports; an explicit value overrides physical mounting differences.
     CameraOrientation cameraOrientation = CameraOrientation::Auto;

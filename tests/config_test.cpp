@@ -8,6 +8,7 @@ namespace fs = std::filesystem;
 TEST(Config, DefaultsWhenFileMissing) {
     Config defaults = Config::load("does_not_exist.conf");
     EXPECT_EQ(defaults.cameraBackend, "pi");
+    EXPECT_EQ(defaults.mode, OperatingMode::Persistent); // Safer default (item 10).
     EXPECT_EQ(defaults.noMotionTimeoutSeconds, 120);
     EXPECT_DOUBLE_EQ(defaults.recordingFps, 30.0);
 }
@@ -63,4 +64,12 @@ TEST_F(ConfigTest, EncoderSettings) {
     EXPECT_EQ(c.encoder, "hw");
     EXPECT_EQ(c.videoBitrateKbps, 8000);
     EXPECT_EQ(c.videoGopSeconds, 3);
+}
+
+TEST_F(ConfigTest, OperatingMode) {
+    write("mode = driving\n"
+          "mode = sideways\n"); // invalid: last good value kept
+    Config c = Config::load(p);
+    EXPECT_EQ(c.mode, OperatingMode::Driving);
+    EXPECT_EQ(Config::load("does_not_exist.conf").mode, OperatingMode::Persistent);
 }

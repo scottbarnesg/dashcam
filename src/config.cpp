@@ -66,6 +66,10 @@ bool applyKeyValue(Config& config, const std::string& key, const std::string& va
             return false;
         }
         config.cameraBackend = value;
+    } else if (key == "mode") {
+        if (!parseOperatingMode(value, config.mode)) {
+            return false;
+        }
     } else if (key == "camera_orientation") {
         if (!parseCameraOrientation(value, config.cameraOrientation)) {
             return false;

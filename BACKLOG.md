@@ -169,7 +169,7 @@ per-frame CPU cost.
   before swapping the implementation; keep `MotionDetector`'s interface so
   the driving state machine is untouched.
 
-## 10. Configurable operating modes: `driving` vs `persistent`
+## 10. Configurable operating modes: `driving` vs `persistent` — DONE
 
 Supersedes §2's motion-as-driving-proxy decision for the driving case: instead
 of inferring driving from motion, the mode is an explicit config setting that
@@ -187,6 +187,13 @@ selects both the power model and the recording trigger.
   safer choice if misconfigured); validate at startup and log the active mode.
 - Motion detection may still run in driving mode for future event tagging
   (e.g. incident flags), but must never gate recording in that mode.
+
+Implemented: `mode` config key (default `persistent`, validated + logged at
+startup) selects the `DrivingController` trigger. In driving mode the
+controller is Recording from the first frame (capture runs at `recording_fps`
+from boot; the no-motion timeout never applies), so §3's segment rollover +
+boot recovery own the drive boundaries. Motion detection still runs every
+frame in both modes but never gates recording in driving mode.
 
 ## 11. Brief "greyed-out" flashes in VLC playback (open — root cause not confirmed)
 

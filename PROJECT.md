@@ -24,9 +24,13 @@ The system operates in an **intermittently connected environment**:
 
 ## Current status / gaps
 
-- Driving trigger implemented as a **motion-as-driving proxy** (BACKLOG item 2):
-  motion starts recording; recording continues until no motion is seen for a
-  configurable timeout (default 120s). Mid-drive fragmentation at stops is accepted.
+- Operating **mode** is an explicit config setting (`mode = driving | persistent`,
+  backlog item 10), superseding the pure motion-as-driving proxy:
+  `driving` (ignition power) records continuously from boot — power presence
+  is the trigger, motion never gates recording; `persistent` (battery) uses
+  the motion-as-driving state machine (backlog item 2): motion starts
+  recording; recording continues until no motion is seen for a configurable
+  timeout (default 120s). Mid-drive fragmentation at stops is accepted.
 - Capture runs behind a `Camera` interface with a single production backend:
   libcamera (Pi Camera Module and any libcamera-supported camera, including
   UVC webcams); tests use a simulated camera. Frames flow as native YUV

@@ -16,7 +16,10 @@ Pipeline::Pipeline(std::unique_ptr<Camera> cam, Options opts)
       controller(this->options.driving),
       motionQueue(this->options.motionQueueCapacity, SafeQueue<std::shared_ptr<const RawFrame>>::Overflow::DropOldest),
       recordQueue(this->options.recordQueueCapacity, SafeQueue<RecordEvent>::Overflow::DropNewest) {
-    captureIntervalUs.store(static_cast<long long>(1e6 / this->options.driving.idleFps));
+    // Driving mode never idles (item 10): capture starts at the recording rate.
+    double startFps = this->options.driving.mode == OperatingMode::Driving ? this->options.driving.recordingFps
+                                                                           : this->options.driving.idleFps;
+    captureIntervalUs.store(static_cast<long long>(1e6 / startFps));
 }
 
 Pipeline::~Pipeline() {
@@ -125,7 +128,11 @@ void Pipeline::motionLoop() {
             if (!recordQueue.push(std::move(startEvent))) {
                 std::cerr << "Pipeline: recorder queue full at recording start" << std::endl;
             }
-            std::cout << "Motion detected! Recording video..." << std::endl;
+            if (options.driving.mode == OperatingMode::Driving) {
+                std::cout << "Driving mode: starting continuous recording..." << std::endl;
+            } else {
+                std::cout << "Motion detected! Recording video..." << std::endl;
+            }
         }
         // NOTE: frames are forwarded to the recorder by the ingest stage
         // (gated on recordingActive); this stage emits lifecycle events only.

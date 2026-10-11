@@ -72,3 +72,42 @@ TEST(DrivingController, PacingNeverNegative) {
     c.onFrame(t, false);
     EXPECT_EQ(c.timeUntilNextCapture(t + std::chrono::hours(1)), std::chrono::microseconds::zero());
 }
+
+TEST(DrivingMode, RecordsFromFirstFrameWithoutMotion) {
+    DrivingController::Params p = fastParams(std::chrono::seconds(2));
+    p.mode = OperatingMode::Driving;
+    DrivingController c(p);
+    auto t = Clock::now();
+    EXPECT_TRUE(c.onFrame(t, false)); // Item 10: power, not motion, triggers.
+    EXPECT_EQ(c.state(), State::Recording);
+    t += std::chrono::hours(1);
+    EXPECT_TRUE(c.onFrame(t, false)); // Never stops while powered (power loss ends the drive).
+    EXPECT_EQ(c.state(), State::Recording);
+}
+
+TEST(DrivingMode, IgnoresNoMotionTimeoutAndUsesRecordingFps) {
+    DrivingController::Params p;
+    p.mode = OperatingMode::Driving;
+    p.noMotionTimeout = std::chrono::seconds(1);
+    p.idleFps = 2;      // 500ms period if the idle rate ever applied
+    p.recordingFps = 20; // 50ms period
+    DrivingController c(p);
+    auto t = Clock::now();
+    c.onFrame(t, false);
+    auto wait = c.timeUntilNextCapture(t);
+    EXPECT_LE(wait, std::chrono::milliseconds(60));
+    EXPECT_GE(wait, std::chrono::milliseconds(40));
+}
+
+TEST(OperatingModeParsing, ParsesKnownValuesOnly) {
+    OperatingMode m = OperatingMode::Driving;
+    ASSERT_TRUE(parseOperatingMode("persistent", m));
+    EXPECT_EQ(m, OperatingMode::Persistent);
+    ASSERT_TRUE(parseOperatingMode("driving", m));
+    EXPECT_EQ(m, OperatingMode::Driving);
+    EXPECT_FALSE(parseOperatingMode("Driving", m));   // case-sensitive
+    EXPECT_FALSE(parseOperatingMode("", m));
+    EXPECT_EQ(m, OperatingMode::Driving);             // untouched on failure
+    EXPECT_STREQ(operatingModeName(OperatingMode::Driving), "driving");
+    EXPECT_STREQ(operatingModeName(OperatingMode::Persistent), "persistent");
+}
