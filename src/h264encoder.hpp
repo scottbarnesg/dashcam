@@ -74,6 +74,12 @@ class H264Encoder {
 
     private:
         void pollThread();
+        // Copy a packed (rows-per-pitch == width) YUV frame into a driver
+        // input buffer laid out with the codec's negotiated bytesperline,
+        // which exceeds the frame width whenever the codec aligns strides
+        // (e.g. the Pi pads 720 -> 736 for NV12; a plain packed memcpy there
+        // shears every row and desynchronises the chroma planes).
+        void writeFrame(unsigned char* dst, const cv::Mat& yuv) const;
 
         static constexpr int kNumInputBuffers = 6;   // codec inputs (we own copies)
         static constexpr int kNumCaptureBuffers = 12; // encoded bitstream buffers
@@ -81,6 +87,11 @@ class H264Encoder {
         int fd = -1;
         Params settings;
         OutputCallback outputCallback;
+        // Codec-negotiated input layout (from the OUTPUT S_FMT reply): the
+        // driver aligns bytesperline up, so buffer geometry must be derived
+        // from these, never assumed to equal width.
+        std::size_t inputStride = 0;
+        std::size_t inputFrameBytes = 0;
 
         struct CaptureBuffer {
             void* mem = nullptr;

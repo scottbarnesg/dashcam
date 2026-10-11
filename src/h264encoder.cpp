@@ -97,6 +97,23 @@ H264Encoder::H264Encoder(const Params& params) : settings(params) {
     if (xioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
         throw std::runtime_error("H264Encoder: failed to set output (input) format");
     }
+    // The codec silently aligns bytesperline up (measured on the Pi:
+    // 720 -> 736 NV12, 768 I420; widths that are already aligned come back
+    // unchanged). Everything written to the input buffers must honour the
+    // returned pitch; assuming width shears the picture diagonally and
+    // misplaces the chroma planes (green/blue bands).
+    inputStride = fmt.fmt.pix_mp.plane_fmt[0].bytesperline;
+    if (inputStride < static_cast<std::size_t>(settings.width)) {
+        inputStride = static_cast<std::size_t>(settings.width);
+    }
+    if (fmt.fmt.pix_mp.width != static_cast<unsigned>(settings.width) ||
+        fmt.fmt.pix_mp.height != static_cast<unsigned>(settings.height)) {
+        throw std::runtime_error("H264Encoder: codec changed the requested frame size");
+    }
+    inputFrameBytes = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
+    if (inputFrameBytes < static_cast<std::size_t>(inputStride) * settings.height * 3 / 2) {
+        inputFrameBytes = static_cast<std::size_t>(inputStride) * settings.height * 3 / 2;
+    }
 
     fmt = {};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -248,12 +265,46 @@ void H264Encoder::setOutputCallback(OutputCallback callback) {
     outputCallback = std::move(callback);
 }
 
+void H264Encoder::writeFrame(unsigned char* dst, const cv::Mat& yuv) const {
+    const unsigned char* src = yuv.data;
+    const std::size_t width = settings.width;
+    const std::size_t height = settings.height;
+    if (inputStride == width) {
+        std::memcpy(dst, src, width * height * 3 / 2); // Packed layout: one copy.
+        return;
+    }
+    for (std::size_t row = 0; row < height; row++) {
+        std::memcpy(dst + row * inputStride, src + row * width, width);
+    }
+    unsigned char* dstChroma = dst + inputStride * height;
+    const unsigned char* srcChroma = src + width * height;
+    if (settings.inputFormat == PixelFormat::NV12) {
+        for (std::size_t row = 0; row < height / 2; row++) {
+            std::memcpy(dstChroma + row * inputStride, srcChroma + row * width, width);
+        }
+    } else {
+        // I420 (single-plane convention): U at stride*H, V at stride*H +
+        // (stride/2)*(H/2), chroma rows pitched stride/2.
+        const std::size_t chromaWidth = width / 2;
+        const std::size_t chromaStride = inputStride / 2;
+        unsigned char* dstV = dstChroma + chromaStride * (height / 2);
+        const unsigned char* srcV = srcChroma + chromaWidth * (height / 2);
+        for (std::size_t row = 0; row < height / 2; row++) {
+            std::memcpy(dstChroma + row * chromaStride, srcChroma + row * chromaWidth, chromaWidth);
+            std::memcpy(dstV + row * chromaStride, srcV + row * chromaWidth, chromaWidth);
+        }
+    }
+}
+
 bool H264Encoder::encode(const cv::Mat& yuv, std::int64_t timestampUs,
                          std::chrono::milliseconds waitMs) {
     if (failed()) {
         return false;
     }
-    std::size_t frameBytes = yuv.total();
+    if (yuv.cols != settings.width || yuv.rows != settings.height * 3 / 2) {
+        setError("frame size does not match encoder configuration");
+        return false;
+    }
     int index = -1;
     {
         std::unique_lock<std::mutex> lock(inputMutex);
@@ -267,13 +318,13 @@ bool H264Encoder::encode(const cv::Mat& yuv, std::int64_t timestampUs,
         index = freeInputs.front();
         freeInputs.pop();
     }
-    if (frameBytes > inputSizes[index]) {
+    if (inputFrameBytes > inputSizes[index]) {
         setError("frame larger than encoder input buffer");
         std::lock_guard<std::mutex> lock(inputMutex);
         freeInputs.push(index);
         return false;
     }
-    std::memcpy(inputBuffers[index], yuv.data, frameBytes);
+    writeFrame(inputBuffers[index], yuv);
 
     v4l2_buffer buf = {};
     v4l2_plane planes[VIDEO_MAX_PLANES] = {};
@@ -285,8 +336,8 @@ bool H264Encoder::encode(const cv::Mat& yuv, std::int64_t timestampUs,
     buf.timestamp.tv_sec = timestampUs / 1000000;
     buf.timestamp.tv_usec = timestampUs % 1000000;
     buf.m.planes = planes;
-    buf.m.planes[0].bytesused = frameBytes;
-    buf.m.planes[0].length = frameBytes;
+    buf.m.planes[0].bytesused = inputFrameBytes;
+    buf.m.planes[0].length = inputFrameBytes;
     if (xioctl(fd, VIDIOC_QBUF, &buf) < 0) {
         setError("failed to queue frame to codec");
         std::lock_guard<std::mutex> lock(inputMutex);
