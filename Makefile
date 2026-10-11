@@ -15,13 +15,14 @@ lint:
 	cppcheck --enable=all --suppress=missingIncludeSystem --suppress=unusedFunction -I src/ -I include/ src/ include/ run/ tests/
 
 install:
-	make build
+	$(MAKE) build
 	sudo cp build/dashcam /usr/local/bin/dashcam
-	cp ./systemd/dashcam-base.service ./systemd/dashcam.service
 	./systemd/configure-service.sh
-	sudo cp systemd/dashcam.service /etc/systemd/system/
+	sudo cp systemd/dashcam.service /etc/systemd/system/dashcam.service
 	mkdir -p /home/${USER}/.dashcam
 	[ -f /home/${USER}/.dashcam/dashcam.conf ] || cp ./dashcam.conf.example /home/${USER}/.dashcam/dashcam.conf
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now dashcam.service
 
 
 install-deps:

@@ -1,13 +1,25 @@
 [Unit]
 Description=Dashcam Service
-After=network.target
+# No network dependency: recording is offline-first (offload, when it lands,
+# handles connectivity itself). StartLimit* disabled so a camera that isn't
+# ready at boot retries forever instead of wedging into "failed".
+StartLimitIntervalSec=0
+StartLimitBurst=0
 
 [Install]
 WantedBy=multi-user.target
 
 [Service]
 Type=simple
+ExecStart=/usr/local/bin/dashcam
 Restart=always
 RestartSec=10
-ExecStart=/usr/local/bin/dashcam
-User=
+# libcamera needs /dev/video* and the render/vchiq nodes; the service user
+# gets them via groups instead of running as root.
+SupplementaryGroups=video render
+# Graceful shutdown: SIGTERM must reach the process so it can flush the
+# in-progress segment; allow enough time for the encoder drain.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+User=__USER__
+WorkingDirectory=__HOME__/.dashcam

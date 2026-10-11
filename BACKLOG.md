@@ -71,7 +71,7 @@ Connectivity is intermittent: files accumulate while driving (offline), offload 
 - ~~Bounded frame buffer~~ — DONE (bounded at 64 frames, drops counted and logged).
 - ~~Empty-frame handling~~ — DONE (dropped in capture, motion, and writer paths).
 - ~~`VideoWriter` destructor hang~~ — DONE (`SafeQueue::close()` wakes blocked consumers).
-- Fix `configure-service.sh` (appends a literal sed command into the unit file instead of executing it) and `make install` invoking `make build` non-recursively.
+- ~~Fix `configure-service.sh` (appends a literal sed command into the unit file instead of executing it) and `make install` invoking `make build` non-recursively.~~ DONE: the unit is now generated from the pristine base template with `__USER__`/`__HOME__` placeholder substitution (idempotent, verified with `systemd-analyze verify`); `make install` uses `$(MAKE) build` and completes the boot-setup step (`daemon-reload` + `enable --now`). The unit gained `SupplementaryGroups=video render` (libcamera access without root), `KillSignal=SIGTERM`, `TimeoutStopSec=60` (encoder flush on stop/reboot), and unlimited restart attempts. The app now handles SIGTERM/SIGINT (installed before camera init) so `systemctl stop` and reboot flush the in-progress segment instead of hard-killing.
 
 ## 7. Camera orientation / rotation — DONE (pending verification on real Pi hardware)
 
@@ -157,6 +157,25 @@ per-frame CPU cost.
   shadows clips) and score candidate algorithms on trigger rate / misses
   before swapping the implementation; keep `MotionDetector`'s interface so
   the driving state machine is untouched.
+
+## 10. Configurable operating modes: `driving` vs `persistent`
+
+Supersedes §2's motion-as-driving-proxy decision for the driving case: instead
+of inferring driving from motion, the mode is an explicit config setting that
+selects both the power model and the recording trigger.
+
+- `driving` mode: camera is powered only while the engine runs (ignition
+  power). When powered, record continuously — no motion-detection prerequisite.
+  Motion detection is out of the recording path entirely; power presence *is*
+  the driving signal. Boot starts recording; power loss ends the drive
+  (relies on §3 power-loss-safe segments).
+- `persistent` mode: battery-powered, independent of ignition. Recording is
+  conditioned on motion detection (parked-surveillance behavior; §2's state
+  machine and §9's detector improvements apply here).
+- Config: `mode = driving | persistent` (pick a default — persistent is the
+  safer choice if misconfigured); validate at startup and log the active mode.
+- Motion detection may still run in driving mode for future event tagging
+  (e.g. incident flags), but must never gate recording in that mode.
 
 ## Later / ideas
 
