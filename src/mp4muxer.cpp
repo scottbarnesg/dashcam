@@ -275,8 +275,19 @@ void Mp4Muxer::write(const uint8_t* annexB, std::size_t size, bool keyframe, std
     if (pts <= lastPts) {
         pts = lastPts + 1; // Strict monotonicity guard (duplicate/zero stamps).
     }
+    // Each sample must span the real time until the NEXT sample, not a fixed
+    // one-tick duration. PTS follow capture clocks, so at below-nominal
+    // capture rates (and whenever the capture queue drops a frame) samples
+    // are spaced further apart than one tick. With a fixed duration of 1 the
+    // timeline has unfilled gaps, which strict/hardware players render as
+    // brief grey flashes (ffmpeg fills the gap with the last frame, hiding
+    // it). Duration = the PTS delta to the previous sample closes the hole.
+    std::int64_t duration = (lastPts >= 0) ? (pts - lastPts) : 1;
+    if (duration < 1) {
+        duration = 1;
+    }
     packet->pts = packet->dts = pts;
-    packet->duration = 1; // One timebase tick; capture-time gaps live in the PTS.
+    packet->duration = static_cast<int>(duration);
     nextPts++;
     lastPts = pts;
     if (keyframe || idr) {
