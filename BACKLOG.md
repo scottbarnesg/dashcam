@@ -188,6 +188,45 @@ selects both the power model and the recording trigger.
 - Motion detection may still run in driving mode for future event tagging
   (e.g. incident flags), but must never gate recording in that mode.
 
+## 11. Brief "greyed-out" flashes in VLC playback (open — root cause not confirmed)
+
+Reported on Pi 3B+ and Zero 2 W recordings: short random stretches of the
+clip look greyed-out/desaturated, **only in VLC** — Chromium and Firefox play
+the same files cleanly. NOT caused by dropped capture frames: reproduced on a
+run with `record-stage drops=0` (only expected camera-queue drops), and it is
+reproducible on `master`.
+
+Investigation so far (against `dashcam_seg_20261011-135711_0001.mp4` and ~18
+other segments) rules these out:
+- **Decoded pixels are clean.** Per-frame and per-16x16-block scans of the
+  decoded output (ffmpeg) found zero grey / flat-luma / desaturated frames or
+  blocks across the affected files. ffmpeg decodes with no errors.
+- **Timeline is continuous, no gaps.** Parsed every `moof`/`traf`/`tfdt`/
+  `trun`: per-sample durations + fragment base-times reconstruct a gapless
+  presentation timeline; sum(durations) spans the whole clip. (The older
+  fixed-`duration=1` muxing DID leave real gaps — fixed on
+  `fix-sample-durations` — but the grey flashes predate AND postdate that,
+  so gaps were not this bug.)
+
+Leading hypotheses (unverified, to pursue):
+- **VLC hardware-decode artifact at fragment boundaries.** We fragment on
+  every keyframe (`frag_keyframe`, ~every `video_gop_seconds`), producing many
+  small `moof` boxes (30 in a 60 s clip). Some players blank/grey briefly at a
+  fMP4 fragment discontinuity where browsers conceal it. First test: play the
+  affected clip with `vlc --avcodec-hw=none` (and `--avcodec-dr=0`) to see if
+  it's a VLC-side decode issue vs the file. Mitigation candidates: lengthen the
+  fragment interval, or test whether browsers-only tolerance is acceptable.
+- **`tfhd` default-sample-flags** marking P-frames such that VLC waits for the
+  next IDR and shows grey. Compare our `trun`/`tfhd` flags against a
+  `ffmpeg`-muxed H.264 clip that plays fine in VLC.
+- Confirm by re-muxing an affected clip to a fresh container
+  (`ffmpeg -c copy`): if the copy plays clean in VLC, it is our MP4 packaging;
+  if it still greys, it is the elementary stream / VLC decode.
+
+Note: `src/mp4muxer.cpp` now sets per-sample durations = the real capture-time
+PTS delta (branch `fix-sample-durations`); that gap fix is unrelated to this
+symptom but should land first so this is reproduced against gapless files.
+
 ## Later / ideas
 
 - Secondary/fallback driving triggers — GPS speed, MPU-6050 IMU (in hand; needs no-solder wiring via Grove SHAT or jumpers for dev), or ACC-switched power.
