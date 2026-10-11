@@ -50,8 +50,11 @@ CameraOrientation orientationFromRotationProperty(int ccwDegrees);
 // Applies the orientation to a captured frame (packed formats per
 // frame.hpp) so motion detection and the writer consume correctly
 // oriented pixels. Auto is treated as Rotate0; callers resolve Auto
-// against the sensor first. Returns false and leaves the frame
-// untouched for formats this cannot transform (odd dimensions).
+// against the sensor first. Rotate90/Rotate270 (and the mirror forms
+// built on them) swap the frame dimensions: a sideways-mounted camera
+// records portrait as a consequence, not a bug. Returns false and
+// leaves the frame untouched for formats this cannot transform (odd
+// dimensions).
 bool applyOrientation(RawFrame& frame, CameraOrientation orientation);
 
 #endif
