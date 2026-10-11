@@ -1,4 +1,4 @@
-.PHONY: build clean test lint install install-deps certs
+.PHONY: build clean test lint install uninstall install-deps certs
 
 build:
 	mkdir -p build
@@ -24,6 +24,14 @@ install:
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now dashcam.service
 
+# Mirrors install: stops, disables, and removes the unit and the binary.
+# Leaves ~/.dashcam (config, videos, manifest) untouched — uninstalling the
+# service must never delete recordings.
+uninstall:
+	sudo systemctl disable --now dashcam.service || true
+	sudo rm -f /etc/systemd/system/dashcam.service
+	sudo systemctl daemon-reload
+	sudo rm -f /usr/local/bin/dashcam
 
 install-deps:
 	sudo apt install -y cppcheck build-essential cmake pkg-config git libssl-dev libopencv-dev libcamera-dev libcamera-dev
