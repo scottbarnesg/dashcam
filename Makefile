@@ -1,12 +1,16 @@
 .PHONY: build clean test lint install uninstall install-deps certs
 
+# Serial-ish default: unbounded -j OOMs on the Pi Zero 2 W (512 MB) during
+# OpenCV-heavy compiles. Override on bigger machines: make build JOBS=8
+JOBS ?= 2
+
 build:
 	mkdir -p build
-	cd build; cmake ../; make -j
+	cd build; cmake ../; make -j$(JOBS)
 
 test:
 	mkdir -p build
-	cd build; cmake -DBUILD_TESTS=ON ../; make -j dashcam_tests; ctest --output-on-failure
+	cd build; cmake -DBUILD_TESTS=ON ../; make -j$(JOBS) dashcam_tests; ctest --output-on-failure
 
 clean:
 	rm -rf build
