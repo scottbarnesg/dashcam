@@ -73,7 +73,10 @@ segment. Only one process can own the camera — stop the service first
 
 ## Install as a boot service
 
-Run this **on the Pi**:
+Run this **on the Pi**, as your normal user — do **not** prefix it with
+`sudo` (it invokes `sudo` internally for the privileged steps; running the
+whole target as root would generate a unit that runs as root and fails at
+startup):
 
 ```sh
 make install
