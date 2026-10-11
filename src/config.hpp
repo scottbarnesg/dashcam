@@ -22,6 +22,11 @@ struct Config {
     std::string encoder = "auto";          // auto | hw | sw (hw = Pi V4L2 H.264 codec)
     int videoBitrateKbps = 5000;           // hardware encoder target bitrate
     int videoGopSeconds = 2;               // hardware encoder IDR/fragment interval
+    // Storage cleanup (item 5b): reclaim the oldest recordings to keep at
+    // least minFreeMB free (also the recorder's pause floor); retentionDays
+    // additionally drops recordings older than N days (0 = no age limit).
+    int minFreeMB = 512;
+    int retentionDays = 0;
 
     // Parses path; missing file -> defaults. Invalid entries are reported to
     // stderr but never fatal.

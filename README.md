@@ -58,7 +58,14 @@ logged and ignored.
 
 Key settings: motion threshold and no-motion timeout (driving trigger),
 idle/recording fps, `segment_length_seconds` (power-loss blast radius),
-`encoder = auto|hw|sw`, bitrate/GOP, and `camera_orientation` override.
+`encoder = auto|hw|sw`, bitrate/GOP, `camera_orientation` override, and storage
+cleanup (`min_free_mb`, `retention_days`).
+
+Storage is bounded automatically: the oldest manifest-registered recordings are
+deleted to keep `min_free_mb` free and, if `retention_days > 0`, anything older
+than the retention limit. The in-progress segment and any quarantined file are
+never deleted. (Deletion after confirmed server offload — backlog 5c — is not
+implemented yet.)
 
 ## Run manually
 
@@ -113,8 +120,8 @@ binary. Your config and recordings in `~/.dashcam/` are left untouched.
 ## Layout
 
 - `src/` — capture (libcamera), orientation, motion detection, driving state
-  machine, encoder/muxer, segmented writer, manifest, boot recovery, and the
-  three-stage capture pipeline.
+  machine, encoder/muxer, segmented writer, manifest, boot recovery, storage
+  cleanup, and the three-stage capture pipeline.
 - `run/dashcam.cpp` — production entry point.
 - `tests/` — googletest unit tests (simulated camera; no hardware needed).
 - `systemd/` — unit template + generator script.

@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -43,6 +44,11 @@ class VideoWriter {
             std::string encoder = "auto";  // auto | hw | sw (hw = V4L2 M2M H.264 codec).
             int bitrateKbps = 5000;        // Hardware encoder target bitrate.
             int gopSeconds = 2;            // Hardware encoder IDR interval (fragment length).
+            // Invoked on the writer thread when free space is below minFreeBytes
+            // just before a segment opens, giving the storage manager (item 5b) a
+            // chance to reclaim space so recording can continue. Returns true if
+            // anything was freed; the writer re-checks free space either way.
+            std::function<bool()> onOutOfSpace = nullptr;
         };
 
         VideoWriter(std::filesystem::path fileDir, SegmentOptions options);

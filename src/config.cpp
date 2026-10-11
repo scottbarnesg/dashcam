@@ -108,6 +108,14 @@ bool applyKeyValue(Config& config, const std::string& key, const std::string& va
         if (!checkInt(config.videoGopSeconds, 1)) {
             return false;
         }
+    } else if (key == "min_free_mb") {
+        if (!checkInt(config.minFreeMB, 0)) {
+            return false;
+        }
+    } else if (key == "retention_days") {
+        if (!checkInt(config.retentionDays, 0)) {
+            return false;
+        }
     } else {
         std::cerr << "Config: unknown key '" << key << "'" << std::endl;
         return false;

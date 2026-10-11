@@ -51,12 +51,23 @@ The manifest is the load-bearing artifact: cleanup, offload, and crash recovery 
 - Per-recording manifest entry: path, start time, duration, size, SHA-256, type, and state (local / upload-pending / offload-confirmed).
 - Manifest must survive power loss: write-temp + atomic rename (or append-only log), and be rebuildable from on-disk files if corrupted.
 
-### 5b. Cleanup of old files
+### 5b. Cleanup of old files — DONE
 
 Bound local storage so the SD card never fills:
 
 - Delete oldest recordings when free space drops below a threshold and/or total age exceeds a retention limit (finish/replace the unmerged `feature/delete-old-videos` WIP).
 - Ensure writes fail gracefully (no corrupt files/crashes) when disk is full or the card is read-only.
+
+Implemented as a manifest-driven `cleanup` module (replaces the unmerged
+`feature/delete-old-videos` `VideoManager` stub). Oldest-first reclamation to a
+`min_free_mb` floor plus an optional `retention_days` age limit; a grace window
+protects very recent files. Runs at boot (age retention) and on-demand from
+`VideoWriter` when free space nears the pause floor. It only ever deletes files
+the manifest knows about that are on disk, so the in-progress segment (never
+registered) and quarantined files are off-limits, plus a `.writing`-sentinel
+guard. `selectVictims` is pure/unit-tested; disk-full is already handled by the
+writer's free-space pause. (Delete-after-offload preference is 5c, once a
+server ack marks a file `offload_confirmed`.)
 
 ### 5c. Offload to server over the network (future phase — design now)
 

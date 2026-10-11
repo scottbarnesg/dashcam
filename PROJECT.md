@@ -42,13 +42,18 @@ The system operates in an **intermittently connected environment**:
 - A **manifest** (`manifest.jsonl`, atomic writes, SHA-256 per file, rebuildable)
   tracks every complete recording and its upload state — the basis for cleanup
   and offload.
+- **Storage cleanup** (backlog 5b) bounds the SD card: the oldest
+  manifest-registered recordings are deleted to keep `min_free_mb` free and,
+  when `retention_days > 0`, anything past the age limit. Runs at boot and
+  on-demand when the recorder nears full; the in-progress segment and
+  quarantined files are never touched.
 - Configuration via `dashcam.conf` (thresholds, timeout N, fps, segment length,
   paths); runtime tuning needs no recompile.
 - Frames are orientation-corrected in the capture backend (backlog 7): the
   sensor's reported rotation is applied (or a `camera_orientation` config
   override), so motion detection and the encoder see upright pixels.
   Pending on-device verification.
-- Old-file cleanup (backlog 5b) and server offload (5c) — not yet implemented;
-  OpenSSL and the manifest are ready for them.
+- Server offload (backlog 5c) — not yet implemented; OpenSSL and the manifest
+  are ready for it.
 - Secondary driving triggers (GPS, MPU-6050 IMU, ACC-switched power) — backlog.
 

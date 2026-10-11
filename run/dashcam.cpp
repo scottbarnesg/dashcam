@@ -5,6 +5,7 @@
 #include <thread>
 
 #include "camera.hpp"
+#include "cleanup.hpp"
 #include "config.hpp"
 #include "manifest.hpp"
 #include "pipeline.hpp"
@@ -43,6 +44,20 @@ int main(int argc, char* argv[]) {
         std::cout << "Recovery: registered " << recovered << " unregistered recording(s) in the manifest" << std::endl;
     }
 
+    // Storage cleanup (item 5b): apply age retention at boot, and reclaim on
+    // demand whenever the recorder runs low on space (wired into the writer
+    // below). Both run on the recorder thread against the same manifest.
+    cleanup::Policy cleanupPolicy;
+    cleanupPolicy.minFreeBytes = static_cast<std::uintmax_t>(config.minFreeMB) * 1024 * 1024;
+    if (config.retentionDays > 0) {
+        cleanupPolicy.maxAge = std::chrono::hours(24LL * config.retentionDays);
+    }
+    cleanup::Result bootCleanup = cleanup::enforce(manifest, config.videoDir, cleanupPolicy);
+    if (bootCleanup.deleted > 0) {
+        std::cout << "Cleanup: reclaimed " << bootCleanup.deleted << " old recording(s), "
+                  << (bootCleanup.freedBytes / (1024 * 1024)) << " MB at boot" << std::endl;
+    }
+
     auto camera = createCamera(config.cameraBackend, config.cameraOrientation);
     std::string backend = camera->name();
 
@@ -59,6 +74,12 @@ int main(int argc, char* argv[]) {
     options.segments.encoder = config.encoder;
     options.segments.bitrateKbps = config.videoBitrateKbps;
     options.segments.gopSeconds = config.videoGopSeconds;
+    // Pause the recorder at the same floor the cleanup targets, and give it a
+    // way to reclaim space first so a full card rolls instead of stalling.
+    options.segments.minFreeBytes = cleanupPolicy.minFreeBytes;
+    options.segments.onOutOfSpace = [&manifest, cleanupPolicy, videoDir = config.videoDir]() {
+        return cleanup::enforce(manifest, videoDir, cleanupPolicy).deleted > 0;
+    };
 
     Pipeline pipeline(std::move(camera), options);
     std::cout << "Dashcam started with camera backend: " << backend << std::endl;

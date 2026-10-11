@@ -53,3 +53,13 @@ encoder = auto
 # Hardware encoder target bitrate (kbps) and IDR/fragment interval (seconds).
 video_bitrate_kbps = 5000
 video_gop_seconds = 2
+
+# Storage cleanup: the oldest recordings (per the manifest) are deleted to keep
+# at least this many MB free on the video volume. Recording also pauses rather
+# than filling the card if it cannot reclaim enough. This value doubles as the
+# recorder's free-space pause floor.
+min_free_mb = 512
+
+# Additionally delete any recording older than this many days. 0 disables the
+# age limit, leaving free space as the only driver (loop recording).
+retention_days = 0

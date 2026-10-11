@@ -120,6 +120,11 @@ bool VideoWriter::hasFreeSpace() {
 }
 
 void VideoWriter::openSegment(std::chrono::system_clock::time_point frameTime, const RawFrame& firstFrame) {
+    if (!hasFreeSpace() && options.onOutOfSpace) {
+        // Reclaim space (item 5b) before giving up: delete the oldest
+        // recordings so a full card rolls over instead of silently stopping.
+        options.onOutOfSpace();
+    }
     if (!hasFreeSpace()) {
         std::cerr << "VideoWriter: out of disk space, segment not started" << std::endl;
         return;
