@@ -36,7 +36,7 @@
 // failure mode for a dashcam.
 class FramePool {
     public:
-        FramePool(int rows, int cols, std::size_t capacity) {
+        FramePool(int rows, int cols, std::size_t capacity) : state(std::make_shared<State>()) {
             state->rows = rows;
             state->cols = cols;
             state->capacity = capacity;
