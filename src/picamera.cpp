@@ -137,7 +137,7 @@ class PiCamera::Impl {
         template <typename Planes>
         cv::Mat convertJpeg(const Planes& planes, const LFrameMetadata& metadata);
         static void* mapPlane(const LFrameBuffer::Plane& plane);
-        static const unsigned char* planeData(void* address, const LFrameBuffer::Plane& plane);
+        static const unsigned char* planeData(const void* address, const LFrameBuffer::Plane& plane);
         static void unmapPlane(void* address, const LFrameBuffer::Plane& plane);
 };
 
@@ -371,7 +371,7 @@ void* PiCamera::Impl::mapPlane(const LFrameBuffer::Plane& plane) {
     return mmap(nullptr, plane.offset + plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
 }
 
-const unsigned char* PiCamera::Impl::planeData(void* address, const LFrameBuffer::Plane& plane) {
+const unsigned char* PiCamera::Impl::planeData(const void* address, const LFrameBuffer::Plane& plane) {
     return static_cast<const unsigned char*>(address) + plane.offset;
 }
 
