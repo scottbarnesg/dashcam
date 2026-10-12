@@ -1,23 +1,28 @@
 #include "motion.hpp"
 
-void MotionDetector::addFrame(RawFrame frame) {
-    if (frame.empty()) {
+void MotionDetector::addFrame(SharedFrame frame) {
+    if (!frame || frame->empty()) {
         return;
     }
     std::scoped_lock lock(frameMutex);
-    previousFrame = currentFrame.clone(); // Current frame becomes previous frame
-    // New frame becomes current frame, reduced to grayscale / luma.
-    switch (frame.format) {
+    previousFrameLease = std::move(currentFrameLease);
+    previousFrame = currentFrame; // Header over the previous lease's buffer.
+    switch (frame->format) {
         case PixelFormat::NV12:
         case PixelFormat::I420:
             // Y plane is the first H rows of the packed YUV mat; a header-only
-            // view, no copy.
-            currentFrame = frame.data.rowRange(0, frame.size().height);
+            // view, no copy. The lease keeps the buffer alive while views live.
+            currentFrame = frame->data.rowRange(0, frame->size().height);
             break;
         case PixelFormat::BGR:
-            cv::cvtColor(frame.data, currentFrame, cv::COLOR_BGR2GRAY);
+            // Alternating scratch buffers: a conversion must not overwrite
+            // what previousFrame is still viewing.
+            grayIndex ^= 1;
+            cv::cvtColor(frame->data, grayscale[grayIndex], cv::COLOR_BGR2GRAY);
+            currentFrame = grayscale[grayIndex];
             break;
     }
+    currentFrameLease = std::move(frame);
     lastResult = computeMotion();
 }
 
@@ -27,8 +32,7 @@ bool MotionDetector::computeMotion() {
     if (currentFrame.empty() || previousFrame.empty()) {
         return false;
     }
-    // Perform background subtraction
-    cv::Mat frameDiff;
+    // Perform background subtraction (member buffer: no per-frame allocation).
     cv::absdiff(previousFrame, currentFrame, frameDiff);
     // Calculate the threshold
     cv::threshold(frameDiff, frameDiff, 25, 255, cv::THRESH_BINARY);
@@ -55,7 +59,11 @@ std::chrono::system_clock::time_point MotionDetector::motionLastDetected() {
 
 void MotionDetector::reset() {
     std::scoped_lock lock(frameMutex);
+    previousFrameLease.reset();
+    currentFrameLease.reset();
     previousFrame = cv::Mat{};
     currentFrame = cv::Mat{};
+    grayscale[0] = cv::Mat{};
+    grayscale[1] = cv::Mat{};
     lastResult = false;
 }

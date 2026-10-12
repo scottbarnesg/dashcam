@@ -1,4 +1,6 @@
 #include <chrono>
+#include <memory>
+
 #include <opencv2/core.hpp>
 
 #ifndef FRAME_HPP
@@ -35,5 +37,11 @@ struct RawFrame {
         return data.size();
     }
 };
+
+// Frames flow through the pipeline as refcounted leases on pooled buffers
+// (see frame_pool.hpp): the camera hands out leases, each stage holds the
+// ones it references, and the buffer returns to the pool when the last
+// lease is released.
+using SharedFrame = std::shared_ptr<const RawFrame>;
 
 #endif

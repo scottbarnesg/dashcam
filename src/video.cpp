@@ -62,8 +62,8 @@ VideoWriter::~VideoWriter() {
     }
 }
 
-void VideoWriter::addFrame(RawFrame frame) {
-    if (frame.empty()) {
+void VideoWriter::addFrame(SharedFrame frame) {
+    if (!frame || frame->empty()) {
         return;
     }
     std::scoped_lock lock(frameBufferMut);
@@ -238,7 +238,7 @@ void VideoWriter::closeSegment() {
     }
 }
 
-void VideoWriter::submitFrame(RawFrame& frame) {
+void VideoWriter::submitFrame(const RawFrame& frame) {
     if (usingHw) {
         cv::Mat yuv;
         const cv::Mat* data = &frame.data;
@@ -267,28 +267,28 @@ void VideoWriter::submitFrame(RawFrame& frame) {
 
 void VideoWriter::writeToFile() {
     // Warm up: hold a few frames so the FPS estimate is meaningful before opening the file.
-    std::vector<RawFrame> warmup;
+    std::vector<SharedFrame> warmup;
     while (warmup.size() < 10) {
-        RawFrame frame = frameBuffer.pop();
-        if (frame.empty()) {
+        SharedFrame frame = frameBuffer.pop();
+        if (!frame) {
             return; // Buffer closed before any video was produced.
         }
         warmup.push_back(std::move(frame));
     }
-    openSegment(frameTime(warmup.front()), warmup.front());
-    for (RawFrame& frame : warmup) {
-        submitFrame(frame);
+    openSegment(frameTime(*warmup.front()), *warmup.front());
+    for (const SharedFrame& frame : warmup) {
+        submitFrame(*frame);
     }
     while (true) {
-        RawFrame frame = frameBuffer.pop();
-        if (frame.empty()) {
+        SharedFrame frame = frameBuffer.pop();
+        if (!frame) {
             break; // Buffer closed and drained.
         }
         bool segmentActive = usingHw || segmentWriter.isOpened();
-        auto stamp = frameTime(frame);
+        auto stamp = frameTime(*frame);
         if (segmentActive && stamp - segmentStart >= std::chrono::seconds(options.lengthSeconds)) {
             closeSegment(); // Self-closing segment: durable across power loss.
-            openSegment(stamp, frame);
+            openSegment(stamp, *frame);
         }
         if (usingHw && encoder->failed()) {
             // Encode-side failure (e.g. codec node died): roll the segment so
@@ -296,10 +296,10 @@ void VideoWriter::writeToFile() {
             // takes over.
             std::cerr << "VideoWriter: rolling segment after encoder failure" << std::endl;
             closeSegment();
-            openSegment(getCurrentTime(), frame);
+            openSegment(getCurrentTime(), *frame);
         }
         if (usingHw || segmentWriter.isOpened()) {
-            submitFrame(frame);
+            submitFrame(*frame);
         }
     }
     closeSegment();

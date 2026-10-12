@@ -57,4 +57,15 @@ CameraOrientation orientationFromRotationProperty(int ccwDegrees);
 // dimensions).
 bool applyOrientation(RawFrame& frame, CameraOrientation orientation);
 
+// Zero-allocation variant for the capture hot path: transforms src into a
+// caller-provided dst (dst.data is (re)created only if its geometry is
+// wrong), using scratchY/scratchC as per-plane scratch buffers. Callers
+// reusing the same scratch mats across frames allocate nothing after the
+// first two calls per plane size. src and dst must not share data. Same
+// dimension/return semantics as applyOrientation; on false the dst
+// contents are undefined.
+bool applyOrientationInto(const RawFrame& src, RawFrame& dst,
+                          CameraOrientation orientation,
+                          cv::Mat& scratchY, cv::Mat& scratchC);
+
 #endif

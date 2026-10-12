@@ -30,9 +30,11 @@
 // power cut because fragments close on keyframes. "encoder = sw" (or a codec
 // that cannot be opened) falls back to the software cv::VideoWriter path.
 // The frame buffer is bounded: if encoding falls behind capture, new frames
-// are dropped and counted rather than consuming unbounded memory. The
-// destructor closes the buffer (waking the writer thread), flushes, closes the
-// current segment, and joins.
+// are dropped and counted rather than consuming unbounded memory. Its slots
+// hold SharedFrame leases on the camera's pooled buffers (frame_pool.hpp),
+// so a full buffer pins a bounded amount of memory instead of allocating
+// per frame. The destructor closes the buffer (waking the writer thread),
+// flushes, closes the current segment, and joins.
 class VideoWriter {
     public:
         struct SegmentOptions {
@@ -53,27 +55,34 @@ class VideoWriter {
 
         VideoWriter(std::filesystem::path fileDir, SegmentOptions options);
         ~VideoWriter();
-        void addFrame(RawFrame frame);
-        // Convenience for BGR callers (tests, dev paths).
+        // Lease-taking hot path: the buffer holds shared_ptr references into
+        // the camera's pooled buffers, so enqueueing costs a refcount bump.
+        void addFrame(SharedFrame frame);
+        // Convenience for BGR callers (tests, dev paths); wraps a copy into
+        // an unpooled frame (these callers own their buffers).
+        void addFrame(RawFrame frame) { addFrame(std::make_shared<const RawFrame>(std::move(frame))); }
         void addFrame(cv::Mat frame) { addFrame(RawFrame{std::move(frame), PixelFormat::BGR}); }
         int droppedFrames() const { return droppedFrameCount.load(); }
         int segmentsWritten() const { return _segmentsWritten; }
 
     private:
-        static constexpr std::size_t kBufferCapacity = 64;
+        // 32 frames ≈ 2 s of slack at the measured 15 fps encode rate behind
+        // the hardware encoder: enough to bridge a muxer/segment-close
+        // hiccup, small enough that a wedged encoder bounds residency.
+        static constexpr std::size_t kBufferCapacity = 32;
         std::chrono::time_point<std::chrono::system_clock> getCurrentTime();
         int calculateFPS();
         bool hasFreeSpace();
         void openSegment(std::chrono::system_clock::time_point frameTime, const RawFrame& firstFrame);
         void closeSegment();
-        void submitFrame(RawFrame& frame);
+        void submitFrame(const RawFrame& frame);
         void writeToFile();
         std::filesystem::path outputDir;
         SegmentOptions options;
         std::chrono::time_point<std::chrono::system_clock> firstFrameTime;
         std::chrono::time_point<std::chrono::system_clock> lastFrameTime;
         std::atomic<int> framesSeen{0};
-        SafeQueue<RawFrame> frameBuffer{kBufferCapacity};
+        SafeQueue<SharedFrame> frameBuffer{kBufferCapacity};
         std::mutex frameBufferMut;
         std::thread writeThread;
         std::atomic<int> droppedFrameCount{0};

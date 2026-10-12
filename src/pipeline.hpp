@@ -73,9 +73,10 @@ class Pipeline {
         // or an instruction to close the current writer. Events and frames
         // share one FIFO so lifecycle order is preserved by construction
         // (e.g. a frame pushed while a stop is queued still lands in the
-        // still-open segment).
+        // still-open segment). Frames are pooled-buffer leases; the buffer
+        // returns to the camera pool when the writer drops the last one.
         struct RecordEvent {
-            std::shared_ptr<const RawFrame> frame;
+            SharedFrame frame;
             std::unique_ptr<VideoWriter> startWriter;
             bool stop = false;
         };

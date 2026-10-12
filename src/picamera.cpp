@@ -14,6 +14,7 @@
 #include "orientation.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -31,6 +32,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "frame_pool.hpp"
 #include "queue.hpp"
 
 // The project defines its own Camera interface; alias the libcamera types
@@ -61,7 +63,7 @@ class PiCamera::Impl {
         // or a transient consumer stall) the freshest frames must survive —
         // DropNewest would freeze the queue contents and deliver a lagging,
         // timestamp-compressed view of reality.
-        SafeQueue<RawFrame> frames{kQueueCapacity, SafeQueue<RawFrame>::Overflow::DropOldest};
+        SafeQueue<SharedFrame> frames{kQueueCapacity, SafeQueue<SharedFrame>::Overflow::DropOldest};
         std::atomic<bool> running{false};
         std::atomic_flag tornDown = ATOMIC_FLAG_INIT;
 
@@ -71,6 +73,12 @@ class PiCamera::Impl {
         static constexpr std::size_t kQueueCapacity = 8;
         static constexpr unsigned int kTargetWidth = 1280;
         static constexpr unsigned int kTargetHeight = 720;
+        // Pooled 1280x720 NV12 buffers (1.3 MB each, ~95 MB worst case).
+        // Capacity covers the worst-case in-flight count: camera queue (8) +
+        // pipeline motion queue (4) + record queue (16) + writer frame buffer
+        // (32) + writer warm-up burst and thread-transit holds (~12). Above
+        // this the camera drops frames (poolStalls) instead of allocating.
+        static constexpr std::size_t kPoolCapacity = 72;
 
         LCameraManager manager;
         std::shared_ptr<LCamera> camera;
@@ -78,6 +86,15 @@ class PiCamera::Impl {
         std::unique_ptr<LFrameBufferAllocator> allocator;
         LStream* stream = nullptr;
         std::vector<std::unique_ptr<LRequest>> requests;
+
+        // Frame buffer recycling (frame_pool.hpp): output-geometry leases
+        // handed to the pipeline; a persistent pre-rotation assembly buffer
+        // and per-plane orientation scratch (only used when a rotation is
+        // configured). All allocated once at configure time.
+        std::unique_ptr<FramePool> pool;
+        cv::Mat assembly;
+        cv::Mat scratchY;
+        cv::Mat scratchC;
 
         LPixelFormat pixelFormat;
         std::optional<libcamera::ColorSpace> streamColorSpace;
@@ -109,13 +126,14 @@ class PiCamera::Impl {
         unsigned int dumpLimit = 0xFFFFFFFF;
         bool dumpChecked = false;
         unsigned int dumpIndex = 0;
-        RawFrame convert(LFrameBuffer* buffer);
+        SharedFrame convert(LFrameBuffer* buffer);
+        RawFrame assemble(LFrameBuffer* buffer, cv::Mat& target);
         // Templated on the plane container: std::vector<Plane> on libcamera
         // 0.2 (Bookworm's older releases), Span<const Plane> on 0.3+.
         template <typename Planes>
-        cv::Mat convertNv12(const Planes& planes);
+        bool convertNv12(const Planes& planes, cv::Mat& target);
         template <typename Planes>
-        cv::Mat convertI420(const Planes& planes);
+        bool convertI420(const Planes& planes, cv::Mat& target);
         template <typename Planes>
         cv::Mat convertJpeg(const Planes& planes, const LFrameMetadata& metadata);
         static void* mapPlane(const LFrameBuffer::Plane& plane);
@@ -129,7 +147,7 @@ PiCamera::PiCamera(CameraOrientation requestedOrientation)
 
 PiCamera::~PiCamera() = default;
 
-RawFrame PiCamera::captureImage() {
+SharedFrame PiCamera::captureImage() {
     return impl->frames.pop();
 }
 
@@ -141,12 +159,16 @@ std::size_t PiCamera::queueDrops() const {
     return impl->frames.dropCount();
 }
 
+std::size_t PiCamera::poolStalls() const {
+    return impl->pool ? impl->pool->stallsCount() : 0;
+}
+
 void PiCamera::Impl::requestComplete(LRequest* request) {
     // Runs on the libcamera event thread: assemble, hand off, requeue; never block.
     if (request->status() != LRequest::RequestCancelled) {
         for (const auto& bufferPair : request->buffers()) {
-            RawFrame frame = convert(bufferPair.second);
-            if (!frame.empty()) {
+            SharedFrame frame = convert(bufferPair.second);
+            if (frame) {
                 frames.push(std::move(frame)); // Drops when full; the camera never blocks.
             }
         }
@@ -291,6 +313,22 @@ void PiCamera::Impl::configureStream() {
         pixelFormat != libcamera::formats::MJPEG) {
         throw std::runtime_error("libcamera: unsupported pixel format " + pixelFormat.toString());
     }
+    // Pre-allocate the frame working set (frame_pool.hpp): buffers are the
+    // POST-orientation geometry, since that is what leaves this backend.
+    // MJPEG decodes via imdecode (OpenCV-owned buffer) and cannot use the
+    // pool; it is the dev/webcam path only.
+    if (pixelFormat != libcamera::formats::MJPEG) {
+        OrientationTransform transform = transformFor(orientation);
+        unsigned int outWidth = width;
+        unsigned int outHeight = height;
+        if (transform.rotateCode == cv::ROTATE_90_CLOCKWISE ||
+            transform.rotateCode == cv::ROTATE_90_COUNTERCLOCKWISE) {
+            std::swap(outWidth, outHeight);
+        }
+        pool = std::make_unique<FramePool>(outHeight * 3 / 2, outWidth, kPoolCapacity);
+        std::cout << "PiCamera: frame pool: " << kPoolCapacity << " x "
+                  << outWidth << "x" << outHeight << " buffers" << std::endl;
+    }
 }
 
 void PiCamera::Impl::allocateRequests() {
@@ -343,7 +381,11 @@ void PiCamera::Impl::unmapPlane(void* address, const LFrameBuffer::Plane& plane)
     }
 }
 
-RawFrame PiCamera::Impl::convert(LFrameBuffer* buffer) {
+// Assembles one frame buffer into a packed, format-native image. The target
+// Mat (a pooled buffer, or the pre-rotation assembly buffer) is (re)created
+// only when its geometry does not match, so in steady state this performs
+// zero allocations.
+RawFrame PiCamera::Impl::assemble(LFrameBuffer* buffer, cv::Mat& target) {
     const LFrameMetadata& metadata = buffer->metadata();
     // Return type differs by libcamera version (vector vs Span); let the
     // compiler deduce it and instantiate the templated helpers to match.
@@ -361,101 +403,161 @@ RawFrame PiCamera::Impl::convert(LFrameBuffer* buffer) {
                   << (streamColorSpace ? streamColorSpace->toString() : std::string("none")) << std::endl;
     }
     RawFrame frame;
-    if (pixelFormat == libcamera::formats::MJPEG) {
-        frame.data = convertJpeg(planes, metadata);
-        frame.format = PixelFormat::BGR;
-    } else if (pixelFormat == libcamera::formats::NV12) {
-        frame.data = convertNv12(planes);
+    bool ok = false;
+    if (pixelFormat == libcamera::formats::NV12) {
+        ok = convertNv12(planes, target);
         frame.format = PixelFormat::NV12;
-    } else {
-        frame.data = convertI420(planes);
+    } else if (pixelFormat == libcamera::formats::YUV420) {
+        ok = convertI420(planes, target);
         frame.format = PixelFormat::I420;
     }
-    if (frame.data.empty()) {
+    if (!ok || target.empty()) {
         return RawFrame();
     }
-    // Item 7: correct orientation once, post-conversion, so motion
-    // detection and the writer both see upright pixels.
-    if (!applyOrientation(frame, orientation) && !orientationWarned) {
-        orientationWarned = true;
-        std::cerr << "PiCamera: cannot apply orientation to " << width << "x" << height
-                  << " frame; emitting unrotated" << std::endl;
-    }
-    frame.colorSpace = frameColorSpace;
-    frame.timestamp = std::chrono::system_clock::now();
+    frame.data = target; // Header copy; pixels stay in the pooled buffer.
     return frame;
 }
 
+SharedFrame PiCamera::Impl::convert(LFrameBuffer* buffer) {
+    if (pixelFormat == libcamera::formats::MJPEG) {
+        // imdecode owns its output buffer; the pool only serves the native
+        // YUV formats (dev/webcam path, allocation accepted).
+        const LFrameMetadata& metadata = buffer->metadata();
+        auto&& planes = buffer->planes();
+        if (metadata.status != LFrameMetadata::FrameSuccess || planes.empty()) {
+            return nullptr;
+        }
+        std::shared_ptr<RawFrame> frame = std::make_shared<RawFrame>();
+        frame->data = convertJpeg(planes, metadata);
+        if (frame->data.empty()) {
+            return nullptr;
+        }
+        frame->format = PixelFormat::BGR;
+        if (!applyOrientation(*frame, orientation) && !orientationWarned) {
+            orientationWarned = true;
+            std::cerr << "PiCamera: cannot apply orientation to " << width << "x" << height
+                      << " frame; emitting unrotated" << std::endl;
+        }
+        frame->colorSpace = frameColorSpace;
+        frame->timestamp = std::chrono::system_clock::now();
+        return frame;
+    }
+    if (!pool) {
+        return nullptr;
+    }
+    // Mutable lease: metadata is filled in below; it converts to the
+    // const SharedFrame handed to the pipeline on return.
+    std::shared_ptr<RawFrame> lease = pool->acquire();
+    if (!lease) {
+        return nullptr; // Pool exhausted: drop the frame (counted in stalls).
+    }
+    OrientationTransform transform = transformFor(orientation);
+    cv::Mat* target = &lease->data;
+    if (!transform.identity()) {
+        // Rotate into the pooled buffer from a persistent assembly buffer
+        // (the transform cannot write through the same pixels).
+        const unsigned int rows = height * 3 / 2;
+        if (assembly.rows != (int)rows || assembly.cols != (int)width) {
+            assembly.create(rows, width, CV_8UC1);
+        }
+        target = &assembly;
+    }
+    RawFrame view = assemble(buffer, *target);
+    if (view.empty()) {
+        return nullptr;
+    }
+    if (!transform.identity()) {
+        if (!applyOrientationInto(view, *lease, orientation, scratchY, scratchC)) {
+            if (!orientationWarned) {
+                orientationWarned = true;
+                std::cerr << "PiCamera: cannot apply orientation to " << width << "x" << height
+                          << " frame; emitting unrotated" << std::endl;
+            }
+            assembly.copyTo(lease->data);
+        }
+    }
+    lease->format = view.format;
+    lease->colorSpace = frameColorSpace;
+    lease->timestamp = std::chrono::system_clock::now();
+    return lease;
+}
+
 template <typename Planes>
-cv::Mat PiCamera::Impl::convertNv12(const Planes& planes) {
+bool PiCamera::Impl::convertNv12(const Planes& planes, cv::Mat& target) {
     if (planes.size() < 2) {
-        return cv::Mat();
+        return false;
     }
     void* yMap = mapPlane(planes[0]);
     void* uvMap = mapPlane(planes[1]);
-    cv::Mat result;
-    if (yMap != MAP_FAILED && uvMap != MAP_FAILED) {
+    bool ok = yMap != MAP_FAILED && uvMap != MAP_FAILED;
+    if (ok) {
         unsigned int yStride = stride > 0 ? stride : width;
         unsigned int uvStride = planes[1].length / (height / 2);
         if (uvStride < width) {
             uvStride = width;
         }
         // Assemble a contiguous NV12 image (handles padded strides and
-        // separately-allocated planes), then convert with OpenCV.
-        cv::Mat yuv(height * 3 / 2, width, CV_8UC1);
+        // separately-allocated planes) directly into the pooled target, then
+        // convert with OpenCV. A recycled buffer whose geometry drifted (a
+        // rotation-fallback copyTo can resize one) is (re)allocated here.
+        if (target.rows != (int)(height * 3 / 2) || target.cols != (int)width ||
+            target.type() != CV_8UC1) {
+            target.create(height * 3 / 2, width, CV_8UC1);
+        }
         const unsigned char* y = planeData(yMap, planes[0]);
         const unsigned char* uv = planeData(uvMap, planes[1]);
         for (unsigned int row = 0; row < height; row++) {
-            std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
+            std::memcpy(target.row(row).ptr(), y + (std::size_t)row * yStride, width);
         }
         for (unsigned int row = 0; row < height / 2; row++) {
-            std::memcpy(yuv.row(height + row).ptr(), uv + (std::size_t)row * uvStride, width);
+            std::memcpy(target.row(height + row).ptr(), uv + (std::size_t)row * uvStride, width);
         }
-        dumpFrame(yuv, "nv12");
-        result = std::move(yuv);
+        dumpFrame(target, "nv12");
     }
     unmapPlane(yMap, planes[0]);
     unmapPlane(uvMap, planes[1]);
-    return result;
+    return ok;
 }
 
 template <typename Planes>
-cv::Mat PiCamera::Impl::convertI420(const Planes& planes) {
+bool PiCamera::Impl::convertI420(const Planes& planes, cv::Mat& target) {
     if (planes.size() < 3) {
-        return cv::Mat();
+        return false;
     }
     void* yMap = mapPlane(planes[0]);
     void* uMap = mapPlane(planes[1]);
     void* vMap = mapPlane(planes[2]);
-    cv::Mat result;
-    if (yMap != MAP_FAILED && uMap != MAP_FAILED && vMap != MAP_FAILED) {
+    bool ok = yMap != MAP_FAILED && uMap != MAP_FAILED && vMap != MAP_FAILED;
+    if (ok) {
         unsigned int yStride = stride > 0 ? stride : width;
         unsigned int cStride = yStride / 2;
-        cv::Mat yuv(height * 3 / 2, width, CV_8UC1);
+        if (target.rows != (int)(height * 3 / 2) || target.cols != (int)width ||
+            target.type() != CV_8UC1) {
+            target.create(height * 3 / 2, width, CV_8UC1);
+        }
         const unsigned char* y = planeData(yMap, planes[0]);
         const unsigned char* u = planeData(uMap, planes[1]);
         const unsigned char* v = planeData(vMap, planes[2]);
         for (unsigned int row = 0; row < height; row++) {
-            std::memcpy(yuv.row(row).ptr(), y + (std::size_t)row * yStride, width);
+            std::memcpy(target.row(row).ptr(), y + (std::size_t)row * yStride, width);
         }
         // OpenCV reads a 3H/2 x W I420 Mat as FLAT PLANAR: Y (W*H bytes),
         // then U (W/2 * H/2), then V - verified against COLOR_BGR2YUV_I420
         // output (its chroma Mat rows are 2 packed chroma lines each).
         unsigned int chromaWidth = width / 2;
-        unsigned char* chroma = yuv.data + (std::size_t)height * width;
+        unsigned char* chroma = target.data + (std::size_t)height * width;
         unsigned char* uDst = chroma;
         unsigned char* vDst = chroma + (std::size_t)chromaWidth * (height / 2);
         for (unsigned int row = 0; row < height / 2; row++) {
             std::memcpy(uDst + (std::size_t)row * chromaWidth, u + (std::size_t)row * cStride, chromaWidth);
             std::memcpy(vDst + (std::size_t)row * chromaWidth, v + (std::size_t)row * cStride, chromaWidth);
         }
-        dumpFrame(yuv, "i420");
-        result = std::move(yuv);
+        dumpFrame(target, "i420");
     }
     unmapPlane(yMap, planes[0]);
     unmapPlane(uMap, planes[1]);
     unmapPlane(vMap, planes[2]);
-    return result;
+    return ok;
 }
 
 template <typename Planes>

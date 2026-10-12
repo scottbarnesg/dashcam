@@ -14,7 +14,7 @@ Pipeline::Pipeline(std::unique_ptr<Camera> cam, Options opts)
       options(std::move(opts)),
       detector(this->options.motionThreshold),
       controller(this->options.driving),
-      motionQueue(this->options.motionQueueCapacity, SafeQueue<std::shared_ptr<const RawFrame>>::Overflow::DropOldest),
+      motionQueue(this->options.motionQueueCapacity, SafeQueue<SharedFrame>::Overflow::DropOldest),
       recordQueue(this->options.recordQueueCapacity, SafeQueue<RecordEvent>::Overflow::DropNewest) {
     // Driving mode never idles (item 10): capture starts at the recording rate.
     double startFps = this->options.driving.mode == OperatingMode::Driving ? this->options.driving.recordingFps
@@ -68,6 +68,7 @@ void Pipeline::stop() {
         std::cout << "Pipeline stopped: motion-stage drops=" << motionQueue.dropCount()
                   << " record-stage drops=" << recordQueue.dropCount()
                   << " camera-queue drops=" << cameraQueueDrops()
+                  << " pool-stalls=" << camera->poolStalls()
                   << " (expected whenever the sensor outpaces the sampled rate)" << std::endl;
     }
     runCv.notify_all();
@@ -75,21 +76,23 @@ void Pipeline::stop() {
 
 void Pipeline::ingestLoop() {
     while (!stopRequested.load()) {
-        RawFrame frame = camera->captureImage();
-        if (frame.empty()) {
+        SharedFrame frame = camera->captureImage();
+        if (!frame) {
             if (stopRequested.load()) {
                 break;
             }
+            // Null also means the camera's frame pool was exhausted (a
+            // consumer stalled past pool capacity; counted in poolStalls)
+            // or a transient capture failure: back off, never allocate.
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
         if (stopRequested.load()) {
             break;
         }
-        auto shared = std::make_shared<const RawFrame>(std::move(frame));
-        motionQueue.push(shared); // DropOldest: detection always sees the freshest.
+        motionQueue.push(frame); // DropOldest: detection always sees the freshest.
         if (recordingActive.load()) {
-            recordQueue.push(RecordEvent{shared, nullptr, false});
+            recordQueue.push(RecordEvent{frame, nullptr, false});
         }
         // Pace capture to the controller's cadence (idle fps until recording).
         // Excess sensor frames are dropped in the camera's own queue.
@@ -100,12 +103,14 @@ void Pipeline::ingestLoop() {
 void Pipeline::motionLoop() {
     bool wasRecording = false;
     while (true) {
-        auto frame = motionQueue.pop();
+        SharedFrame frame = motionQueue.pop();
         if (!frame) {
             break; // Closed and drained.
         }
         auto now = Clock::now();
-        detector.addFrame(*frame);
+        // The detector keeps the previous/current leases (pinned buffers);
+        // the previous lease is released as the next frame arrives.
+        detector.addFrame(std::move(frame));
         bool isRecording = controller.onFrame(now, detector.motionDetected());
         auto wait = controller.timeUntilNextCapture(now);
         captureIntervalUs.store(std::max<std::chrono::microseconds::rep>(
@@ -158,7 +163,7 @@ void Pipeline::recorderLoop() {
             writer = std::move(event.startWriter);
         }
         if (event.frame && writer) {
-            writer->addFrame(*event.frame);
+            writer->addFrame(std::move(event.frame));
         }
         if (event.stop) {
             // Runs the writer's flush-and-close here (blocking on the encoder

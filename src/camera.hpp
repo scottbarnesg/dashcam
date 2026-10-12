@@ -14,10 +14,12 @@ class Camera {
     public:
         virtual ~Camera() = default;
         // Returns the next frame in the backend's native format (PiCamera:
-        // NV12). Empty frame on failure; callers must check frame.empty().
+        // NV12), as a pooled lease whose buffer recycles once every holder
+        // (queues, stages) releases it. nullptr on failure/shutdown or when
+        // the backend's frame pool is exhausted; callers must null-check.
         // May block until a frame arrives — stop() unblocks it (the queue is
-        // closed, so subsequent calls return empty immediately).
-        virtual RawFrame captureImage() = 0;
+        // closed, so subsequent calls return nullptr immediately).
+        virtual SharedFrame captureImage() = 0;
         // Idempotent shutdown hint for blocking backends: safe to call from a
         // different thread than captureImage. Default: no-op.
         virtual void stop() {}
@@ -25,6 +27,11 @@ class Camera {
         // Expected while the pipeline samples below sensor rate (idle); only
         // a concern during recording. Default 0 for non-queueing backends.
         virtual std::size_t queueDrops() const { return 0; }
+        // Frames dropped because every pooled capture buffer was still in
+        // flight (consumers stalled past the pool's capacity). A rising
+        // count means a stage downstream of capture is too slow or stuck.
+        // Default 0 for backends that do not pool.
+        virtual std::size_t poolStalls() const { return 0; }
         virtual std::string name() const = 0;
 };
 
@@ -45,13 +52,16 @@ class PiCamera : public Camera {
     public:
         explicit PiCamera(CameraOrientation orientation = CameraOrientation::Auto);
         ~PiCamera() override;
-        RawFrame captureImage() override;
+        SharedFrame captureImage() override;
         // Idempotent: stops streaming and closes the frame queue so a
-        // concurrent captureImage() returns empty.
+        // concurrent captureImage() returns nullptr.
         void stop() override;
         // Frames dropped by the libcamera->pipeline queue overflow (counted
         // by SafeQueue; expected at idle pacing, actionable during recording).
         std::size_t queueDrops() const override;
+        // Frames dropped because every pooled capture buffer was in flight
+        // (see frame_pool.hpp); the steady state is zero.
+        std::size_t poolStalls() const override;
         std::string name() const override { return "pi"; }
     private:
         class Impl;

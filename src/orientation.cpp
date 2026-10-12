@@ -5,66 +5,20 @@
 namespace {
 
 // Flip (horizontal) first, then rotate; matches the Mirror* convention in
-// orientation.hpp. Works on any single- or multi-channel plane.
-cv::Mat transformPlane(const cv::Mat& plane, const OrientationTransform& transform) {
-    cv::Mat result = plane;
-    if (transform.mirror) {
-        cv::flip(result, result, 1);
-    }
-    if (transform.rotateCode >= 0) {
-        cv::rotate(result, result, transform.rotateCode);
-    }
-    return result;
-}
-
-bool applyBgr(RawFrame& frame, const OrientationTransform& transform) {
-    frame.data = transformPlane(frame.data, transform);
-    return true;
-}
-
-// Rotates/flips the Y plane and the chroma plane(s) of a packed NV12 or
-// I420 frame (frame.hpp layout) and reassembles the packed form. The same
-// per-plane transform yields a correct whole-image transform for 4:2:0
-// subsampling: the rotated chroma plane always matches half the rotated
-// luma dimensions.
-bool applyYuv(RawFrame& frame, const OrientationTransform& transform, bool semiPlanar) {
-    const cv::Mat& packed = frame.data;
-    if (packed.rows % 3 != 0) {
-        return false;
-    }
-    const int width = packed.cols;
-    const int height = packed.rows * 2 / 3;
-    if (width % 2 || height % 2) {
-        return false; // Odd dimensions cannot be 4:2:0 subsampled.
-    }
-
-    cv::Mat y = transformPlane(packed.rowRange(0, height), transform);
-    const int newWidth = y.cols;
-    const int newHeight = y.rows;
-    if (newWidth % 2 || newHeight % 2) {
-        return false;
-    }
-    cv::Mat out(newHeight * 3 / 2, newWidth, CV_8UC1);
-    y.copyTo(out.rowRange(0, newHeight));
-
-    if (semiPlanar) {
-        cv::Mat uv = packed.rowRange(height, height + height / 2).reshape(2, height / 2);
-        cv::Mat uv2 = transformPlane(uv, transform);
-        uv2.reshape(1, newHeight / 2).copyTo(out.rowRange(newHeight, newHeight + newHeight / 2));
+// orientation.hpp. Works on any single- or multi-channel plane. Results
+// land in `scratch`, which OpenCV's create() keeps allocated across calls
+// when geometry repeats, so steady-state calls allocate nothing. cv::flip
+// is in-place safe; the mirror+rotate chain mirrors what the old
+// allocating transformPlane did.
+void transformInto(const cv::Mat& plane, const OrientationTransform& transform, cv::Mat& scratch) {
+    if (transform.mirror && transform.rotateCode >= 0) {
+        cv::flip(plane, scratch, 1);
+        cv::rotate(scratch, scratch, transform.rotateCode);
+    } else if (transform.mirror) {
+        cv::flip(plane, scratch, 1);
     } else {
-        unsigned char* chroma = packed.data + (std::size_t)height * width;
-        cv::Mat u(height / 2, width / 2, CV_8UC1, chroma);
-        cv::Mat v(height / 2, width / 2, CV_8UC1, chroma + (std::size_t)(width / 2) * (height / 2));
-        cv::Mat u2 = transformPlane(u, transform);
-        cv::Mat v2 = transformPlane(v, transform);
-        uchar* outChroma = out.data + (std::size_t)newHeight * newWidth;
-        cv::Mat uDst(newHeight / 2, newWidth / 2, CV_8UC1, outChroma);
-        cv::Mat vDst(newHeight / 2, newWidth / 2, CV_8UC1, outChroma + (std::size_t)(newWidth / 2) * (newHeight / 2));
-        u2.copyTo(uDst);
-        v2.copyTo(vDst);
+        cv::rotate(plane, scratch, transform.rotateCode);
     }
-    frame.data = std::move(out);
-    return true;
 }
 
 } // namespace
@@ -133,18 +87,85 @@ CameraOrientation orientationFromRotationProperty(int ccwDegrees) {
     }
 }
 
+bool applyOrientationInto(const RawFrame& src, RawFrame& dst,
+                          CameraOrientation orientation,
+                          cv::Mat& scratchY, cv::Mat& scratchC) {
+    OrientationTransform transform = transformFor(orientation);
+    if (src.empty()) {
+        return false;
+    }
+    if (transform.identity()) {
+        src.data.copyTo(dst.data);
+        dst.format = src.format;
+        return true;
+    }
+    if (src.format == PixelFormat::BGR) {
+        transformInto(src.data, transform, scratchY);
+        scratchY.copyTo(dst.data);
+        dst.format = src.format;
+        return true;
+    }
+    // Packed NV12/I420: transform the Y plane and the chroma plane(s)
+    // separately and reassemble. The same per-plane transform yields a
+    // correct whole-image transform for 4:2:0 subsampling: the rotated
+    // chroma plane always matches half the rotated luma dimensions.
+    const cv::Mat& packed = src.data;
+    if (packed.rows % 3 != 0) {
+        return false;
+    }
+    const int width = packed.cols;
+    const int height = packed.rows * 2 / 3;
+    if (width % 2 || height % 2) {
+        return false; // Odd dimensions cannot be 4:2:0 subsampled.
+    }
+    const bool semiPlanar = src.format == PixelFormat::NV12;
+    transformInto(packed.rowRange(0, height), transform, scratchY);
+    const int newWidth = scratchY.cols;
+    const int newHeight = scratchY.rows;
+    if (newWidth % 2 || newHeight % 2) {
+        return false;
+    }
+    dst.data.create(newHeight * 3 / 2, newWidth, CV_8UC1);
+    scratchY.copyTo(dst.data.rowRange(0, newHeight));
+    if (semiPlanar) {
+        cv::Mat uv = packed.rowRange(height, height + height / 2).reshape(2, height / 2);
+        transformInto(uv, transform, scratchC);
+        // View, not mutation: reshaping scratchC itself would change its
+        // geometry and force a reallocation on the next call.
+        cv::Mat chromaView = scratchC.reshape(1, newHeight / 2);
+        chromaView.copyTo(dst.data.rowRange(newHeight, newHeight + newHeight / 2));
+    } else {
+        const unsigned char* chroma = packed.data + (std::size_t)height * width;
+        const cv::Mat u(height / 2, width / 2, CV_8UC1, const_cast<unsigned char*>(chroma));
+        const cv::Mat v(height / 2, width / 2, CV_8UC1,
+                        const_cast<unsigned char*>(chroma + (std::size_t)(width / 2) * (height / 2)));
+        unsigned char* outChroma = dst.data.data + (std::size_t)newHeight * newWidth;
+        cv::Mat uDst(newHeight / 2, newWidth / 2, CV_8UC1, outChroma);
+        cv::Mat vDst(newHeight / 2, newWidth / 2, CV_8UC1,
+                     outChroma + (std::size_t)(newWidth / 2) * (newHeight / 2));
+        transformInto(u, transform, scratchC);
+        scratchC.copyTo(uDst);
+        transformInto(v, transform, scratchC);
+        scratchC.copyTo(vDst);
+    }
+    dst.format = src.format;
+    return true;
+}
+
 bool applyOrientation(RawFrame& frame, CameraOrientation orientation) {
     OrientationTransform transform = transformFor(orientation);
     if (frame.empty() || transform.identity()) {
         return true;
     }
-    switch (frame.format) {
-        case PixelFormat::BGR:
-            return applyBgr(frame, transform);
-        case PixelFormat::NV12:
-            return applyYuv(frame, transform, true);
-        case PixelFormat::I420:
-            return applyYuv(frame, transform, false);
+    // Allocating convenience wrapper (tests, dev paths). The capture hot
+    // path uses applyOrientationInto with caller-owned scratch buffers.
+    cv::Mat scratchY, scratchC;
+    RawFrame out;
+    out.colorSpace = frame.colorSpace;
+    out.timestamp = frame.timestamp;
+    if (!applyOrientationInto(frame, out, orientation, scratchY, scratchC)) {
+        return false;
     }
-    return false;
+    frame = std::move(out);
+    return true;
 }
