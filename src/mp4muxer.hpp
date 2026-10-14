@@ -70,8 +70,10 @@ class Mp4Muxer {
 
         // Custom AVIO callbacks over an fd we own, so fragment-boundary
         // fsync() can pin data to the card before a power cut takes the
-        // page cache with it.
-        static int ioWrite(void* opaque, uint8_t* buf, int size);
+        // page cache with it. The write buffer is const-qualified here; the
+        // libavformat write_packet signature dropped the const in a later
+        // major, so the call site in open() casts the pointer to match.
+        static int ioWrite(void* opaque, const uint8_t* buf, int size);
         static std::int64_t ioSeek(void* opaque, std::int64_t offset, int whence);
         void releaseIo();
 

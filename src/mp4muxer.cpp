@@ -171,7 +171,7 @@ void Mp4Muxer::fail(const std::string& message) {
 
 #ifdef DASHCAM_HAVE_LIBAV
 
-int Mp4Muxer::ioWrite(void* opaque, uint8_t* buf, int size) {
+int Mp4Muxer::ioWrite(void* opaque, const uint8_t* buf, int size) {
     Mp4Muxer* self = static_cast<Mp4Muxer*>(opaque);
     ssize_t written = ::write(self->fileDescriptor, buf, static_cast<size_t>(size));
     if (written < 0) {
@@ -203,7 +203,16 @@ void Mp4Muxer::open() {
     }
     fileDescriptor = fd;
     unsigned char* buffer = static_cast<unsigned char*>(av_malloc(kIoBufferSize));
-    AVIOContext* io = buffer ? avio_alloc_context(buffer, kIoBufferSize, 1, this, nullptr, ioWrite, ioSeek)
+    // libavformat 61+ takes a const write buffer; older majors a mutable one.
+    // The callback is const-correct, so on older majors cast to the signature
+    // they expect (the buffer is never written through it).
+    auto writeCb = ioWrite;
+#if LIBAVFORMAT_VERSION_MAJOR < 61
+    auto writeFn = reinterpret_cast<int (*)(void*, uint8_t*, int)>(writeCb);
+#else
+    auto writeFn = writeCb;
+#endif
+    AVIOContext* io = buffer ? avio_alloc_context(buffer, kIoBufferSize, 1, this, nullptr, writeFn, ioSeek)
                              : nullptr;
     if (!io) {
         av_free(buffer);
