@@ -5,10 +5,14 @@
 
 #include "mp4muxer.hpp"
 
+#include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #ifdef DASHCAM_HAVE_LIBAV
 extern "C" {
@@ -52,6 +56,8 @@ void be32(std::vector<std::uint8_t>& v, std::uint32_t x) {
     v.push_back(static_cast<std::uint8_t>((x >> 8) & 0xFF));
     v.push_back(static_cast<std::uint8_t>(x & 0xFF));
 }
+
+constexpr int kIoBufferSize = 64 * 1024;
 
 } // namespace
 
@@ -165,31 +171,58 @@ void Mp4Muxer::fail(const std::string& message) {
 
 #ifdef DASHCAM_HAVE_LIBAV
 
+int Mp4Muxer::ioWrite(void* opaque, uint8_t* buf, int size) {
+    Mp4Muxer* self = static_cast<Mp4Muxer*>(opaque);
+    ssize_t written = ::write(self->fileDescriptor, buf, static_cast<size_t>(size));
+    if (written < 0) {
+        return AVERROR(errno);
+    }
+    return static_cast<int>(written);
+}
+
+std::int64_t Mp4Muxer::ioSeek(void* opaque, std::int64_t offset, int whence) {
+    Mp4Muxer* self = static_cast<Mp4Muxer*>(opaque);
+    if (whence == AVSEEK_SIZE) {
+        off_t size = lseek(self->fileDescriptor, 0, SEEK_END);
+        return size < 0 ? AVERROR(errno) : static_cast<std::int64_t>(size);
+    }
+    off_t off = lseek(self->fileDescriptor, static_cast<off_t>(offset), whence);
+    return off < 0 ? AVERROR(errno) : static_cast<std::int64_t>(off);
+}
+
 void Mp4Muxer::open() {
     if (opened || failed) {
         return;
     }
-    AVIOContext* io = nullptr;
-    int ret = avio_open2(&io, filePath.string().c_str(), AVIO_FLAG_WRITE, nullptr, nullptr);
-    if (ret < 0) {
-        char err[AV_ERROR_MAX_STRING_SIZE];
-        av_strerror(ret, err, sizeof(err));
-        throw std::runtime_error(std::string("could not open ") + filePath.string() + ": " + err);
+    // Own the file descriptor: the muxer's data must be fsync()ed at every
+    // fragment boundary, and avio gives no handle to the underlying fd
+    // (avio_get_fd was removed in modern libavformat anyway).
+    int fd = ::open(filePath.string().c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        throw std::runtime_error("could not open " + filePath.string() + ": " + std::strerror(errno));
+    }
+    fileDescriptor = fd;
+    unsigned char* buffer = static_cast<unsigned char*>(av_malloc(kIoBufferSize));
+    AVIOContext* io = buffer ? avio_alloc_context(buffer, kIoBufferSize, 1, this, nullptr, ioWrite, ioSeek)
+                             : nullptr;
+    if (!io) {
+        av_free(buffer);
+        ::close(fd);
+        fileDescriptor = -1;
+        throw std::runtime_error(std::string("could not create ") + filePath.string());
     }
     ioContext = io;
 
     AVFormatContext* fmt = nullptr;
-    ret = avformat_alloc_output_context2(&fmt, nullptr, "mp4", filePath.string().c_str());
+    int ret = avformat_alloc_output_context2(&fmt, nullptr, "mp4", filePath.string().c_str());
     if (ret < 0 || !fmt) {
-        avio_closep(&io);
-        ioContext = nullptr;
+        releaseIo();
         throw std::runtime_error("Mp4Muxer: could not create mp4 output context");
     }
     AVStream* stream = avformat_new_stream(fmt, nullptr);
     if (!stream) {
         avformat_free_context(fmt);
-        avio_closep(&io);
-        ioContext = nullptr;
+        releaseIo();
         formatContext = nullptr;
         throw std::runtime_error("Mp4Muxer: could not create stream");
     }
@@ -302,11 +335,31 @@ void Mp4Muxer::write(const uint8_t* annexB, std::size_t size, bool keyframe, std
         return;
     }
     // Fragment boundary: the mov muxer finalizes the previous fragment when
-    // it accepts this keyframe packet. Push it out of the userspace buffer so
+    // it accepts this keyframe packet. Push it all the way to stable media so
     // a power cut cannot lose already-encoded footage that older fragments
-    // covered.
-    if (keyframe) {
+    // covered. avio_flush() alone only reaches the kernel page cache, which a
+    // hard power cut takes with it: dirty pages linger there for up to the
+    // kernel's writeback expiry (~30 s default), which is exactly how much a
+    // hard cut can steal no matter how short the GOP is. The fsync pins each
+    // closed fragment to the card as soon as it is complete.
+    if (keyframe || idr) {
         avio_flush(fmt->pb);
+        if (fsync(fileDescriptor) != 0) {
+            std::cerr << "Mp4Muxer: fsync failed: " << std::strerror(errno) << std::endl;
+        }
+    }
+}
+
+void Mp4Muxer::releaseIo() {
+    if (ioContext) {
+        AVIOContext* io = static_cast<AVIOContext*>(ioContext);
+        av_free(io->buffer);
+        avio_context_free(&io);
+        ioContext = nullptr;
+    }
+    if (fileDescriptor >= 0) {
+        ::close(fileDescriptor);
+        fileDescriptor = -1;
     }
 }
 
@@ -320,15 +373,17 @@ void Mp4Muxer::close() {
                 av_strerror(ret, err, sizeof(err));
                 fail(std::string("av_write_trailer failed: ") + err);
             }
+            // A cleanly closed segment must survive a later power cut too
+            // (it gets registered in the manifest immediately after).
+            avio_flush(fmt->pb);
+            if (fileDescriptor >= 0 && fsync(fileDescriptor) != 0 && !failed) {
+                fail(std::string("fsync after trailer failed: ") + std::strerror(errno));
+            }
         }
         avformat_free_context(fmt);
         formatContext = nullptr;
     }
-    if (ioContext) {
-        AVIOContext* io = static_cast<AVIOContext*>(ioContext);
-        avio_closep(&io);
-        ioContext = nullptr;
-    }
+    releaseIo();
     opened = false;
 }
 
@@ -347,6 +402,9 @@ void Mp4Muxer::write(const uint8_t*, std::size_t, bool, std::int64_t) {
 
 void Mp4Muxer::close() {
     opened = false;
+}
+
+void Mp4Muxer::releaseIo() {
 }
 
 #endif

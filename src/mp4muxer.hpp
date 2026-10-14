@@ -68,10 +68,18 @@ class Mp4Muxer {
     private:
         bool writeHeader(const uint8_t* annexB, std::size_t size);
 
+        // Custom AVIO callbacks over an fd we own, so fragment-boundary
+        // fsync() can pin data to the card before a power cut takes the
+        // page cache with it.
+        static int ioWrite(void* opaque, uint8_t* buf, int size);
+        static std::int64_t ioSeek(void* opaque, std::int64_t offset, int whence);
+        void releaseIo();
+
         std::filesystem::path filePath;
         int width, height, fps;
         void* formatContext = nullptr; // AVFormatContext* (kept out of header)
         void* ioContext = nullptr;     // AVIOContext*
+    int fileDescriptor = -1;           // Backing file for ioContext.
     bool opened = false;
     bool headerWritten = false;
     bool failed = false;
